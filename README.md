@@ -35,7 +35,6 @@ namespace App\Controllers;
 
 use DafCore\Controller;
 use DafCore\Controller\Attributes as a;
-use DafCore\RequestBody;
 
 #[a\HttpRoute]
 class HomeController extends Controller {
