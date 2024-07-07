@@ -1,0 +1,38 @@
+# <Files *.php>
+#     Order Deny,Allow
+#     Deny from all
+# </Files>
+
+# <Files index.php>
+#     Order Allow,Deny
+#     Allow from all
+# </Files>
+
+# RewriteEngine On    # Turn on the rewriting engine
+# RewriteBase /       # Set the base URL for the rewrite rules
+
+# # Don't apply the rules if the request is for a file, directory, or symlink
+# RewriteCond %{REQUEST_FILENAME} !-f
+# RewriteCond %{REQUEST_FILENAME} !-d
+# RewriteCond %{REQUEST_FILENAME} !-l
+
+# # Route all other requests to index.php
+# RewriteRule ^(.+)$ index.php?url=$1 [QSA,L]
+
+Options -MultiViews
+
+<FilesMatch "\.php$">
+    Deny from all
+</FilesMatch>
+
+<Files "index.php">
+    Allow from all
+</Files>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /daf/
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+	RewriteRule ^(.+)$ index.php?url=$1 [QSA,L]
+</IfModule>

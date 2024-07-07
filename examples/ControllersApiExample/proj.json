@@ -1,0 +1,8 @@
+{
+  "Name": "ControllersApi",
+  "Dependencies": {
+    "DafCore": "^",
+    "DafDb": "^",
+    "DafGlobals": "^"
+  }
+}

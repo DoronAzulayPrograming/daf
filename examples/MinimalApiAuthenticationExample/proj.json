@@ -1,0 +1,9 @@
+{
+  "Name": "ApiAuthenticationExample",
+  "Dependencies": {
+    "DafCore": "^",
+    "DafGlobals": "^",
+    "DafDb": "^",
+    "Firebase": "^"
+  }
+}

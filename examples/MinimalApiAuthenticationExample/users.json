@@ -1,0 +1,11 @@
+{
+    "id": 1,
+    "collection": [
+        {
+            "Id": 1,
+            "Username": "admin",
+            "Password": "123",
+            "Roles": "Admin"
+        }
+    ]
+}

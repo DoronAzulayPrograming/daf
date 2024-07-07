@@ -1,0 +1,44 @@
+@import url('https://fonts.googleapis.com/css2?family=Agbalumo&family=Karla:ital,wght@0,200..800;1,200..800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Agbalumo&display=swap');
+.agbalumo-regular {
+    font-family: "Agbalumo", system-ui;
+    font-weight: 400;
+    font-style: normal;
+}
+
+.braket{
+    color:#808080
+}
+.tag-name{
+    color:#569cd6;
+}
+.attr-name{
+    color:#9cdcfd;
+}
+.string-text{
+    color:#ce9178;
+}
+.comment-text{
+    color:#6a9955;
+}
+.php-function-name{
+    color:#dcdcaa;
+}
+.php-number{
+    color:#b5cea8;
+}
+.php-for{
+    color:#c586c0;
+}
+.php-class{
+    color:#4ec9b0;
+}
+.niceText {
+    background: -webkit-linear-gradient(-180deg,#0d6efd, #cb70d5);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.niceTextp {
+    color: #cb70d5;
+}
