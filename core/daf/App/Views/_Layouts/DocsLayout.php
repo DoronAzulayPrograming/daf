@@ -1,5 +1,5 @@
 <?php
-/** @var DafCore\Component $this */
+/** @var DafCore\IComponent $this */
 $this->Use("App\Views\_Layouts\NavBar");
 $this->Use("App\Views\_Layouts\DocsNavBar");
 ?>
@@ -43,6 +43,6 @@ $this->Use("App\Views\_Layouts\DocsNavBar");
     </div>
     <div class="container-md pt-3 content">
         <h1 class="niceText display-5 fw-bold">Docs</h1>
-        <?= $Body ?>
+        <Body />
     </div>
 </div>

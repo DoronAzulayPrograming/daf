@@ -1,7 +1,3 @@
-<?php
-DafCore\ViewManager::$layout = "DocsLayout";
-?>
-
 <h1>RouterMapMethods trait</h1>
 <br>
 <h3>Definition</h3>

@@ -1,7 +1,7 @@
 <?php
-/** @var DafCore\Component $this */
+/** @var DafCore\IComponent $this */
 /** @var DafCore\HeadOutlet $headOutlet */
 
 $headOutlet = $this->Inject(DafCore\HeadOutlet::class);
-$title = $this->ChildContent;
+$title = $this->RenderChildContent();
 $headOutlet->AddContent('PageTitle',"<title>$title</title>");

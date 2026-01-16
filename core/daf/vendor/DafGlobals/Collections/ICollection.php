@@ -1,8 +1,8 @@
 <?php
-namespace DafGlobals;
+namespace DafGlobals\Collections;
 
 interface ICollection extends \IteratorAggregate, \ArrayAccess , \Countable, \JsonSerializable {
-    function Add(mixed $item): void;
+    function Add(mixed $item): mixed;
     function Remove(callable $callback) : void;
 
 

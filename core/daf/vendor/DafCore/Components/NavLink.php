@@ -1,19 +1,26 @@
 <?php
 /** 
- * @var DafCore\Component $this 
+ * @var DafCore\IComponent $this 
  * @var DafCore\Request $req 
  * @var bool $match 
  * */
 
 $req = $this->Inject(DafCore\Request::class);
 $match = $this->Parameter('Match', 'bool') ?? true;
+$startWith = $this->Parameter('StartWith', 'bool') ?? false;
 
 if($match){
-    if($this->AdditionalParameters['href'] === $req->GetUrlPath()){
-        $this->SetAdditionalProps(['class' => 'active'], 'end');
+    if($this->GetAttribute('href') === $req->GetUrlPath()){
+        $this->AddAttributesToEnd(['class' => 'active']);
+    }
+}
+if($startWith){
+    $href = $this->GetAttribute('href');
+    if($href !== null && str_starts_with($req->GetUrlPath(), $href)){
+        $this->AddAttributesToEnd(['class' => 'active']);
     }
 }
 ?>
 
 
-<a <?=$this->GetAdditionalProps()?>><?=$this->ChildContent ?></a>
+<a <?=$this->RenderAttributes()?>><?=$this->RenderChildContent() ?></a>

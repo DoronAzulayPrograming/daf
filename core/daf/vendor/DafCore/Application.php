@@ -1,9 +1,11 @@
 <?php
 namespace DafCore;
+require_once __DIR__."/Controllers/Attributes.php";
 
 class Application{
     use RouterMapMethods;
 
+    public static $BuildOnly = false;
     private bool $isRelease = true;
     public static string $BaseFolder = 'App';
     public Router $Router;
@@ -34,14 +36,33 @@ class Application{
          });
     }
 
+
+
     function Run(){
+        if(self::$BuildOnly) return;
+
+        $cacheFile = "routes.cache.php";
+        $loaded = $this->Router->LoadRoutesCache($cacheFile);
+
         if(!$this->calcTimePerformance)
             echo $this->Router->resolve();
         else echo $this->runWithTimePerformance();
+
+        if(!$loaded){
+            $this->Router->SaveRoutesCache($cacheFile);
+        }
     }
+
 
     function ShowTimePerformance(){
         $this->calcTimePerformance = true;
+    }
+
+    static function HostName(): string{
+        return $_SERVER['HTTP_HOST'];
+    }
+    static function IsHttps(): bool{
+        return !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? true : false;
     }
 
     private function SetUseGlobalComponent()
@@ -152,6 +173,10 @@ trait RouterMapMethods{
     function AddController(string $controller){
         $this->Router->AddController($controller);
     }
+    function RegisterControllers(array $controllers){
+        $this->Router->RegisterControllers($controllers);
+    }
+
 }
 
 
@@ -269,12 +294,12 @@ class Length extends ValidationAttribute
     function Validate($prop_name, $value, $displayName = ""){
         $displayName = $this->getDisplayName($prop_name, $displayName);
 
-        if(strlen($value) < $this->min){
+        if(mb_strlen($value, 'UTF-8') < $this->min){
             $this->Msg = $this->getErrorMsg($displayName, $this->min, "field $displayName require min length of ".$this->min);
             return false;
         }
 
-        if(strlen($value) > $this->max){
+        if(mb_strlen($value, 'UTF-8') > $this->max){
             $this->Msg = $this->getErrorMsg($displayName, $this->max, "field $displayName require max length of ".$this->max);
             return false;
         }

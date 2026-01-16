@@ -1,7 +1,7 @@
 <?php
 namespace DafDb;
-use DafGlobals\Collection;
-use DafGlobals\ICollection;
+use DafGlobals\Collections\Collection;
+use DafGlobals\Collections\ICollection;
 
 /**
  * Class JsonRepository
@@ -15,8 +15,9 @@ use DafGlobals\ICollection;
  * @package DafDb
  */
 class JsonRepository implements ICollection {
+    private const DEFAULT_STRUCT = "{\n    \"id\":0,\n    \"collection\":[]\n}";
+
     protected array $data;
-    private string $struct;
     protected string $filename;
     protected array $options = [];
     
@@ -28,49 +29,78 @@ class JsonRepository implements ICollection {
         $this->loadData();
     }
 
-    private function createFileIfNotExist() {
-        $this->struct = "{
-    \"id\":0,
-    \"collection\":[]
-}";
+    private function createFileIfNotExist(): void
+    {
+        if (file_exists($this->filename)) {
+            return;
+        }
 
-        if(file_exists($this->filename)) return;
-
-        $handle = fopen($this->filename, 'a+');
-
-        fwrite($handle, $this->struct);
-        fclose($handle);
+        file_put_contents($this->filename, self::DEFAULT_STRUCT, LOCK_EX);
     }
 
-    protected function loadData() {
-        $this->data['id'] = 0;
-        $this->data['collection']= [];
-        
-        $json = file_get_contents($this->filename);
-        if(is_bool($json) || !strlen($json))
-            $data = json_decode($this->struct, true);
-        else{
-            $data = json_decode($json, true);
-        }
-        
+    protected function loadData(): void
+    {
+        $raw = @file_get_contents($this->filename);
+        $data = $this->decodeStore($raw);
+
         $this->data['id'] = $data['id'];
-        foreach($data['collection'] as $key => $item){
-            $model = $this->options['model'];
-            $obj = new $model($item);
-            $this->data['collection'][$key] = $obj;
+        if (!isset($this->options['model'])) {
+            $this->data['collection'] = $data['collection'];
+            return;
+        }
+
+        $this->data['collection'] = [];
+        $model = $this->options['model'];
+        foreach ($data['collection'] as $key => $item) {
+            $payload = is_object($item) ? (array) $item : $item;
+            $this->data['collection'][$key] = new $model($payload);
         }
     }
 
-    function SaveData() {
-        $json = json_encode($this->data, JSON_PRETTY_PRINT);
-        file_put_contents($this->filename, $json);
+    private function decodeStore(?string $json): array
+    {
+        if (!is_string($json) || trim($json) === '') {
+            return $this->defaultStore();
+        }
+
+        $data = json_decode($json, true);
+        if (!is_array($data)) {
+            return $this->defaultStore();
+        }
+
+        $id = isset($data['id']) ? (int) $data['id'] : 0;
+        $collection = $data['collection'] ?? [];
+        if (!is_array($collection)) {
+            $collection = [];
+        }
+
+        return [
+            'id' => $id,
+            'collection' => array_values($collection),
+        ];
     }
 
-    function Add(mixed $item): void {
+    private function defaultStore(): array
+    {
+        return ['id' => 0, 'collection' => []];
+    }
+
+    private function persist(): void
+    {
+        $json = json_encode($this->data, JSON_PRETTY_PRINT);
+        file_put_contents($this->filename, $json, LOCK_EX);
+    }
+
+    function SaveChanges() {
+        $this->persist();
+    }
+
+    function Add(mixed $item): mixed {
         if(isset($this->options['auto_increment'])){
             $item->{$this->options['auto_increment']} = ++$this->data['id'];
         }
-        else if(isset($this->options['auto_guid'])){ // auto generate guid
+        
+        if(isset($this->options['auto_guid'])){ // auto generate guid
             $item->{$this->options['auto_guid']} = uniqid();
         }
         $this->data['collection'][] = $item;
@@ -80,6 +110,7 @@ class JsonRepository implements ICollection {
         foreach($this->data['collection'] as $key => $item){
             if($callback($item) === true){
                 unset($this->data['collection'][$key]);
+                $this->data['collection'] = array_values($this->data['collection']);
                 return;
             }
         }
@@ -90,6 +121,7 @@ class JsonRepository implements ICollection {
                 unset($this->data['collection'][$key]);
             }
         }
+        $this->data['collection'] = array_values($this->data['collection']);
     }
 
     function Clear() : void {
@@ -105,14 +137,18 @@ class JsonRepository implements ICollection {
     }
     function Any(callable $func = null) : bool {
         if(is_null($func)) return $this->Count() > 0;
-        $o = $this->SingleOrDefault($func);
-        return !is_null($o);
+        foreach ($this->data['collection'] as $item) {
+            if ($func($item) === true) {
+                return true;
+            }
+        }
+        return false;
     }
     function Count(callable $callback = null): int {
         if(is_null($callback)) return count($this->data['collection']);
 
-        $count = $this->Where($callback);
-        return $count ?? 0;
+        $filtered = array_filter($this->data['collection'], $callback);
+        return count($filtered);
     }
     function Map(callable $func) : ICollection {
         return new Collection(array_map($func, $this->data['collection']));
@@ -174,8 +210,6 @@ class JsonRepository implements ICollection {
         } else {
             $this->data['collection'][$offset] = $value;
         }
-
-        $this->SaveData();
     }
     function offsetExists($offset): bool
     {
@@ -184,7 +218,6 @@ class JsonRepository implements ICollection {
     function offsetUnset($offset): void
     {
         unset($this->data['collection'][$offset]);
-        $this->SaveData();
     }
     function offsetGet(mixed $offset): mixed
     {

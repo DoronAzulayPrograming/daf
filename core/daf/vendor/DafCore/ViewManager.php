@@ -13,18 +13,17 @@ interface IViewManager
 
 class ViewManager implements IViewManager
 {
-
    private array $onAfterRender = [];
    private array $onRender = [];
-   public static string $layout = "MainLayout";
+   private string $layout = "MainLayout";
 
    function GetLayout(): string{
-      return self::$layout;
+      return $this->layout;
    }
 
    function SetLayout(string $layout): IViewManager
    {
-      self::$layout = $layout;
+      $this->layout = $layout;
       return $this;
    }
 
@@ -47,31 +46,40 @@ class ViewManager implements IViewManager
 
    public function RenderView(string $view, array $params = []): string
    {
-      if (file_exists(Application::$BaseFolder . "/Views/_GlobalUsing.php")) {
-         ((new Component(Application::$BaseFolder . "/Views/_GlobalUsing"))->Render());
+      $base = Application::$BaseFolder;
+
+      // Global Using
+      $globalUsing = "$base/Views/_GlobalUsing";
+      if (file_exists("$globalUsing.php")) {
+         (new Component($globalUsing))->Render();
       }
 
       $this->triggerOnRender();
-      $view_path = Application::$BaseFolder . "/Views/$view";
-      if (file_exists($view_path.".php")) {
-         $viewContent = (new Component($view_path, $params))->Render();
-      } else $viewContent = ((new Component($view, $params))->Render());
 
-      $layoutContent = '';
-      if (file_exists(Application::$BaseFolder . "/Views/_Layouts/" . self::$layout . ".php")) {
-         $layout = self::$layout;
-         $layoutContent = ((new LayoutComponent(Application::$BaseFolder . "/Views/_Layouts/$layout", ['Body' => $viewContent]))->Render());
+      $content = '';
+      // Load main view
+      $viewPath = "$base/Views/$view";
+      $viewComponent = new Component(file_exists("$viewPath.php") ? $viewPath : $view, $params);
+
+      // Load layout
+      $layoutPath = "$base/Views/_Layouts/" . $this->layout;
+      if (file_exists("$layoutPath.php")) {
+         $layoutComponent = new LayoutComponent($layoutPath);
+         $layoutComponent->Child = $viewComponent;
       }
 
-      $host_file_path = Application::$BaseFolder . "/Views/_Layouts/_Host";
-      if (file_exists($host_file_path . ".php") && !empty($layoutContent)) {
-         $host = ((new LayoutComponent($host_file_path, ['Layout' => $layoutContent]))->Render());
-         $layoutContent = $host;
+      // Apply host layout if exists
+      $hostPath = "$base/Views/_Layouts/_Host";
+      if (file_exists("$hostPath.php") && isset($layoutComponent)) {
+         $hostComponent = new HostComponent($hostPath);
+         $hostComponent->Child = $layoutComponent;
+         $content = $hostComponent->Render();
       }
+      else if (isset($layoutComponent)) $content = $layoutComponent->Render();
+      else $content = $viewComponent->Render();
 
       $this->triggerOnAfterRender();
-      if (empty($layoutContent))
-         return $viewContent;
-      return $layoutContent;
+
+      return $content;
    }
 }

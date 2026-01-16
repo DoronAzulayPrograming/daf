@@ -1,6 +1,7 @@
 <?php 
-/** @var DafCore\Component $this */
+/** @var DafCore\IComponent $this */
 /** @var string $msg */
+
 $msg = $this->Parameter("Msg");
 ?>
 

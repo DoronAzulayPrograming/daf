@@ -1,6 +1,5 @@
 <?php
-use App\Views\Components\ComponentConstans;
-/** @var \DafCore\Component $this  */
+/** @var \DafCore\IComponent $this  */
 /** @var \DafCore\Request $req  */
 /** @var string $Roles  */
 $Roles = $this->Parameter("Roles");

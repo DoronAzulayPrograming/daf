@@ -12,6 +12,7 @@ class RequestBody extends \stdClass
 }
 
 interface IRequest{
+    function GetRealUrl() : string;
     function GetUrlPath() : string;
     function GetQueryParams() : array;
     function GetRouteParams() : array;
@@ -36,6 +37,9 @@ class Request implements IRequest {
         return $this->data[$name] ?? null;
     }
 
+    function GetRealUrl() : string {
+        return $_SERVER['REQUEST_URI'];
+    }
     function GetUrlPath() : string {
         $p = $_SERVER['REQUEST_URI'];
 

@@ -1,9 +1,9 @@
 <?php
-/** @var DafCore\Component $this  */
+/** @var DafCore\IComponent $this  */
 /** @var DafCore\HeadOutlet $outlet  */
 $outlet = $this->Inject(DafCore\HeadOutlet::class);
 
-$outlet->AddContent($this->ChildContent);
-foreach ($this->Children as $c) {
+$outlet->AddContent($this->RenderChildContent());
+foreach ($this->GetChildren() as $c) {
     $outlet->AddContent($c->Render());
 }

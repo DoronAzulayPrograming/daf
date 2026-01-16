@@ -64,7 +64,9 @@ class ServicesProvidor implements IServicesProvidor,IServicesForCallback {
         $params = $reflection->getParameters();
         $services = [];
         foreach ($params as $param) {
-            $pt = $param->getType()?->getName() ?? "";
+            $type = $param->getType();
+
+            $pt = $type instanceof \ReflectionNamedType ? $type->getName() ?? "" : "";
 
             if($this->container->exists($pt))
                 $services[] = $this->container->GetOne($pt);

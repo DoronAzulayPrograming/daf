@@ -1,12 +1,134 @@
 <?php
 namespace DafCore;
 
-class Component
-{
+interface IComponent{
+   /** Render the raw child content string as provided in markup.
+    * @return string
+    */
+   public function RenderChildContent(): string;
 
-   private static int $NamespacesIncludesFoldersCount = 0;
+   /** Return direct child components.
+    * @return array
+    */
+   public function GetChildren(): array;
+
+   /** Register namespaces for component discovery.
+    * @param string|array $useing string|string[] of file path
+    * @return void
+    */
+   public function Use(string|array $useing): void;
+
+   /** Resolve a service from the DI container.
+    * @param string $type dependency key
+    * @return mixed dependency
+    */
+   public function Inject(string $type): mixed;
+
+   /** Read a parameter (explicit or cascaded), optionally type-check.
+    * @param string $name parameter name
+    * @param string|null $type file path or null
+    * @return mixed
+    */
+   public function Parameter(string $name, string $type = null): mixed;
+
+   /** Read a parameter and fail if missing or null.
+    * @param string $name parameter name
+    * @param string|null $type file path or null
+    * @return mixed
+    */
+   public function RequiredParameter(string $name, string $type = null): mixed;
+
+   /** Provide a cascading value to descendants.
+    * @param string $key
+    * @param mixed $value
+    * @param array|string $for
+    * @return void
+    */
+   public function Cascade(string $key, mixed $value, array|string $for = 'all'):void;
+
+   /** Filter children by component path.
+    * @param string $type file path
+    * @return array
+    */
+   public function GetChildrenOfType(string $type) : array;
+
+   /** Render all children of a given type.
+    * @param string $type file path
+    * @return void
+    */
+   public function RenderChildrenOfType(string $type): void;
+
+   /** Render attributes as an HTML string (escaped).
+    * @return string
+    */
+   public function RenderAttributes(): string;
+
+   /** Get a single attribute value.
+    * @param string $name attribute name
+    * @return string|null attribute value or null
+    */
+   public function GetAttribute(string $name): string|null;
+   
+   /** Get all attributes.
+    * @return array attribute array
+    */
+   public function GetAttributes(): array;
+
+   /** Replace or set multiple attributes.
+    * @param array $attrs attribute array
+    * @return void
+    */
+   public function SetAttributes(array $attrs): void;
+
+   /** Merge attributes to the end.
+    * @param array $attrs attribute array
+    * @return void
+    */
+   public function AddAttributesToEnd(array $attrs): void;
+
+   /** Merge attributes to the start.
+    * @param array $attrs attribute array
+    * @return void
+    */
+   public function AddAttributesToStart(array $attrs): void;
+
+   /** Render this component and its nested components.
+    * @return string
+    */
+   public function Render(): string;
+}
+class Component 
+{
    private static array $Namespaces = [];
-   static function AddNamespaces(string|array $useing)
+   private static int $NamespacesIncludesFoldersCount = 0;
+
+
+   public string $Id;
+   public array $Cascades = [];
+   public array $Cascaded = []; // resolved from ancestors
+
+   public function __construct(
+      public string $Path,
+      public array $Parameters = [],
+      public string $ChildContent = "",
+      public string $Markup = "",
+   ) {
+      $this->Id = uniqid();
+      $this->FullPath = $this->_getFullPath();
+      foreach ($this->Parameters as $key => $value) {
+         if (!ctype_upper($key[0])) {
+            $this->Attributes[$key] = $value;
+            unset($this->Parameters[$key]);
+         }
+      }
+   }
+   public array $Attributes = [];
+   public Component $Parent;
+   public array $Children = [];
+   public string $FullPath;
+
+   /** Register one or more namespaces for component path resolution. */
+   public static function AddNamespaces(string|array $useing)
    {
       if (is_array($useing)) {
          foreach ($useing as $u) {
@@ -28,52 +150,17 @@ class Component
       self::$Namespaces[$name] = $useing;
    }
 
+   /** Convenience wrapper for Component::AddNamespaces. */
+   public function Use(string|array $useing): void{ self::AddNamespaces($useing); }
 
-   public string $Id;
+   /** Resolve a service from the DI container. */
+   public function Inject(string $type): mixed{ return ServicesProvidor::$DI->getOne($type); }
 
-   public function __construct(
-      public string $Path,
-      public array $Parameters = [],
-      public string $ChildContent = "",
-      public string $Markup = "",
-   ) {
-      $this->Id = uniqid();
-      $this->FullPath = $this->_getFullPath();
-      foreach ($this->Parameters as $key => $value) {
-         if (!ctype_upper($key[0])) {
-            $this->AdditionalParameters[$key] = $value;
-            unset($this->Parameters[$key]);
-         }
-      }
-   }
-   public array $AdditionalParameters = [];
-   public Component $Parent;
-   public array $Children = [];
-   public string $FullPath;
-
-   function Use(string|array $useing)
-   {
-      self::AddNamespaces($useing);
-   }
-   function Inject(string $type): mixed
-   {
-      return ServicesProvidor::$DI->getOne($type);
-   }
-   function Store(string $key, mixed $var, array | string $for = 'all')
-   {
-      $this->Parameters[$key] = ['for'=> $for , 'value'=> $var];
-   }
-
-   function Parameter(string $name, string $type = null): mixed
-   {
-      if (!isset($this->Parameters[$name]))
-         return null;
-
-      $var_name = $this->IsVar($this->Parameters[$name]);
-
-      if (is_null($var_name))
-         $val = $this->Parameters[$name];
-      else $val = $this->_getProp($var_name, $this->FullPath, $this->Id);
+   /** Read a parameter or cascaded value, optionally type-check. */
+   public function Parameter(string $name, string $type = null): mixed {
+      $val = null;
+      if (array_key_exists($name, $this->Parameters)) $val = $this->Parameters[$name];
+      else if (array_key_exists($name, $this->Cascaded)) $val = $this->Cascaded[$name];
       
       if (!is_null($val) && !is_null($type)) {
          if (self::getValueType(gettype($val)) !== $type)
@@ -82,9 +169,14 @@ class Component
 
       return $val;
    }
-   function RequiredParameter(string $name, string $type = null): mixed
+
+   /** Read a required parameter and fail if missing or null. */
+   public function RequiredParameter(string $name, string $type = null): mixed
    {
-      if (!isset($this->Parameters[$name]))
+      $isInParameters = isset($this->Parameters[$name]);
+      $isInCascaded = isset($this->Cascaded[$name]);
+
+      if (!$isInParameters && !$isInCascaded)
          die("Required parameter $name is not set in component $this->Path");
 
       $val = $this->Parameter($name, $type);
@@ -94,149 +186,173 @@ class Component
       return $val;
    }
 
-   function GetAdditionalProps()
-   {
-      $props = "";
-      foreach ($this->AdditionalParameters as $key => $value)
-         $props .= "$key='$value'";
-      return $props;
+
+   /** Provide a cascading value to descendants. */
+   public function Cascade(string $key, mixed $value, array|string $for = 'all'):void { $this->Cascades[$key] = ['for' => $for, 'value' => $value]; }
+
+
+   /** Return the raw child content string. */
+   public function RenderChildContent(): string { return $this->ChildContent; }
+
+   /** Return direct child components. */
+   public function GetChildren(): array { return $this->Children; }
+
+   /** Filter children by component path. */
+   public function GetChildrenOfType(string $type) : array { return array_filter($this->Children, fn($c) => $c->FullPath === $type); }
+
+   /** Render all children of a given type. */
+   public function RenderChildrenOfType(string $type): void {
+      $childs = $this->GetChildrenOfType($type);
+      foreach ($childs as $c) echo $c->Render();
    }
-   function SetAdditionalProps(array $props, string $pos = "start")
-   {
-      foreach ($props as $key => $value) {
-         if (!isset($this->AdditionalParameters[$key]))
-            $this->AdditionalParameters[$key] = $value;
+
+   /** Render attributes as an HTML string (escaped). */
+   public function RenderAttributes(): string {
+      $attrs = "";
+      foreach ($this->Attributes as $key => $value) {
+         if ($value === null || $value === false)
+            continue;
+         if ($value === true) {
+            $attrs .= $key . " ";
+         } else {
+            $safe = htmlspecialchars((string) $value, ENT_QUOTES);
+            $attrs .= "$key='$safe' ";
+         }
+      }
+      return $attrs;
+   }
+
+   /** Get a single attribute value. */
+   public function GetAttribute(string $name): string|null {
+      return $this->Attributes[$name] ?? null;
+   }
+
+   /** Get all attributes. */
+   public function GetAttributes(): array { return $this->Attributes; }
+
+   /** Replace or set multiple attributes. */
+   public function SetAttributes(array $attrs): void {
+      foreach ($attrs as $key => $value) {
+         $this->Attributes[$key] = $value;
+      }
+   }
+
+   /** Merge attributes to the end. */
+   public function AddAttributesToEnd(array $attrs): void { $this->AddAttributes($attrs); }
+
+   /** Merge attributes to the start. */
+   public function AddAttributesToStart(array $attrs): void { $this->AddAttributes($attrs, 'start'); }
+
+   /** Merge or append attribute values by position. */
+   public function AddAttributes(array $attrs, string $pos = "end"): void{
+      foreach ($attrs as $key => $value) {
+         if (!isset($this->Attributes[$key]))
+            $this->Attributes[$key] = $value;
          else {
             if ($pos === "start")
-               $this->AdditionalParameters[$key] = "$value " . $this->AdditionalParameters[$key] ?? "";
+               $this->Attributes[$key] = "$value " . $this->Attributes[$key];
             else if ($pos === "end")
-               $this->AdditionalParameters[$key] = $this->AdditionalParameters[$key] . " $value";
+               $this->Attributes[$key] = $this->Attributes[$key] . " $value";
          }
       }
    }
 
-   function GetChildrenOfType(string $type) : array
-   {
-      return array_filter($this->Children, fn($c) => $c->FullPath === $type);
-   }
-   function RenderChildrenOfType(string $type)
-   {
-      $childs = $this->GetChildrenOfType($type);
-      foreach ($childs as $c)
-         echo $c->render();
-   }
 
-   protected function ParamsToRender(): array {
-      return []; 
-   }
-
-   function Render(): string
+   /** Render this component and its nested components. */
+   public function Render(): string
    {
       $componentPath = $this->FullPath . ".php";
       !is_win_os() && $componentPath = str_replace("\\", "/", $componentPath);
 
-      $params_to_render = $this->ParamsToRender();
-      if (!empty($params_to_render)) {
-         foreach ($params_to_render as $key => $value) {
-            $$key = $value;
-         }
-      }
-
 
       if (!empty($this->ChildContent)) {
          $comps = CParser::MakeComponents($this->ChildContent);
-         foreach ($comps as $c) {
+         foreach ($comps as $item) {
             /** @var Component $c */
+            $c = $item['component'];
             $c->Parent = $this;
-            $this->Children[$c->Id] = $c;
+            $c->Cascaded = $this->ResolveCascadeFor($c);
+            $this->Children[$c->Id] = $c; 
          }
       }
 
+      $renderScope = [];
 
-      $strToRender = "";
       if (file_exists($componentPath)) {
-         ob_start();
-         include $componentPath;
-         $strToRender = ob_get_clean();
+         $_DAF_view = new ViewComponent($this);
+
+         $_DAF_componentPath = $componentPath;
+         [$strToRender, $renderScope] = (function () use ($_DAF_componentPath) {
+            ob_start();
+            include $_DAF_componentPath;
+            $_DAF_out = ob_get_clean();
+            $_DAF_scope = get_defined_vars();
+            return [$_DAF_out, $_DAF_scope];
+         })->call($_DAF_view);
+            $renderScope = array_diff_key($renderScope, array_flip([
+               '_DAF_componentPath','_DAF_out','_DAF_scope','_DAF_view'
+            ]));
       } else {
          $strToRender = $this->Path;
       }
 
-      $comps = CParser::MakeComponents($strToRender);
-      foreach ($comps as $c) {
-         /** @var Component $c */
-         $c->Parent = $this;
-         try {
-            $strToRender = str_replace_first($c->Markup, $c->Render(), $strToRender);
-         } catch (\Throwable $th) {
-            echo $th->getMessage();
-         }
+      foreach ($this->Children as $child) {
+         $this->applyScopeToComponent($child, $renderScope);
       }
+
+      $comps = CParser::MakeComponents($strToRender);
+      if (!empty($comps)) {
+         $out = '';
+         $last = 0;
+
+         foreach ($comps as $item) {
+            /** @var Component $c */
+            $c = $item['component'];
+
+            $c->Parent = $this;
+            $c->Cascaded = $this->ResolveCascadeFor($c);
+            $this->applyScopeToComponent($c, $renderScope);
+
+            $start = $item['start'];
+            $end = $item['end']; // absolute end index
+
+            $out .= substr($strToRender, $last, $start - $last);
+
+            try {
+               $out .= $c->Render();
+            } catch (\Throwable $th) {
+               echo $th->getMessage();
+            }
+
+            $last = $end;
+         }
+
+         $out .= substr($strToRender, $last);
+         $strToRender = $out;
+      }
+
 
       return $strToRender;
    }
 
+   
+   /** Resolve $var references inside component parameters using render scope. */
+   private function applyScopeToComponent(Component $c, array $scope): void{
+      foreach ($c->Parameters as $key => $val) {
+         if (is_string($val) && str_starts_with($val, "$")) {
+            $c->Parameters[$key] = $this->ResolveScopeVar($val, $scope);
+         }
+      }
+   }
 
+   /** Normalize PHP type strings to friendly aliases. */
    private function getValueType(string $type): string {
       $types = ['integer' => 'int', 'boolean' => 'bool'];
       if(isset($types[$type])) return $types[$type];
       else return $type;
    }
-   function _getProp(string $name, string $c_name, string $c_id): mixed
-   {
-      if (isset($this->Parameters[$name])) {
-         if (!isset($this->Children[$c_id])) {
-            $arr = $this->Parameters[$name];
 
-            if(is_string($arr) && (($var_name = $this->IsVar($arr)) !== null)){
-               $val = $this->Parent->Parameter($var_name);
-               return $val;
-            }
-            
-            if(is_array($arr)){
-               if (is_array($arr['for'])) {
-                  if (in_array($c_name, $arr['for'])) {
-                     return $arr['value'];
-                  }
-               } else {
-                  if ($arr['for'] === 'all' || $arr['for'] === $c_name) {
-                     return $arr['value'];
-                  }
-               }
-            }
-         }
-      }
-
-      if (strpos($name, "->") !== false) {
-         $arr = explode("->", $name);
-         $n_name = $arr[0];
-         $prop = $arr[1];
-         $val = $this->_getProp($n_name, $c_name, $c_id);
-         if (!is_null($val) && is_object($val) && isset($val->$prop))
-            return $val->$prop;
-      } else if (strpos($name, "[") !== false) {
-         $arr = explode("[", $name);
-         $n_name = $arr[0];
-         $prop = substr(trim($arr[1]), 0, -1);
-         $val = $this->_getProp($n_name, $c_name, $c_id);
-         if (!is_null($val) && is_array($val) && isset($val[$prop]))
-            return $val[$prop];
-      }
-
-      if (!isset($this->Parent))
-         return null;
-
-      return $this->Parent->_getProp($name, $c_name, $c_id);
-   }
-   private function IsVar(mixed $value): mixed
-   {
-      if(!is_string($value)) return null;
-      
-      $pattern = '/\{([\w\[\]\->]+)\}/';
-      preg_match_all($pattern, $value, $matches);
-      return isset($matches[1][0]) && !empty($matches[1][0]) ? $matches[1][0] : null;
-   }
-
+   /** Resolve component path using namespaces and wildcards. */
    private function _getFullPath () : string {
       if(isset(self::$Namespaces[$this->Path])) return self::$Namespaces[$this->Path];
 
@@ -250,16 +366,102 @@ class Component
       }
       return $this->Path;
    }
-}
 
-class LayoutComponent extends Component {
-   protected function ParamsToRender(): array {
-      return $this->Parameters; 
+   /** Match cascade "for" rule against a child component path. */
+   private function matches(Component $child, array|string $for): bool
+   {
+      if ($for === 'all') {
+         return true;
+      }
+
+      if (is_array($for)) {
+         return in_array($child->FullPath, $for, true) || in_array($child->Path, $for, true);
+      }
+
+      return $for === $child->FullPath || $for === $child->Path;
+   }
+
+   /** Resolve "$var" style expressions against the render scope. */
+   private function ResolveScopeVar(string $expr, array $scope): mixed
+   {
+      if ($expr === "" || $expr[0] !== "$") return $expr;
+      $expr = substr($expr, 1);
+
+      $len = strlen($expr);
+      $i = 0;
+      $base = "";
+      while ($i < $len) {
+         $ch = $expr[$i];
+         if ($ch === "[" || ($ch === "-" && ($i + 1 < $len) && $expr[$i + 1] === ">")) break;
+         $base .= $ch;
+         $i++;
+      }
+
+      if ($base === "" || !array_key_exists($base, $scope)) return null;
+      $value = $scope[$base];
+      $rest = substr($expr, $i);
+
+      while ($rest !== "") {
+         if (str_starts_with($rest, "->")) {
+            $rest = substr($rest, 2);
+            $prop = "";
+            $j = 0;
+            $restLen = strlen($rest);
+            while ($j < $restLen) {
+               $ch = $rest[$j];
+               if ($ch === "[" || ($ch === "-" && ($j + 1 < $restLen) && $rest[$j + 1] === ">")) break;
+               $prop .= $ch;
+               $j++;
+            }
+            $value = (is_object($value) && isset($value->$prop)) ? $value->$prop : null;
+            $rest = substr($rest, $j);
+            continue;
+         }
+
+         if (str_starts_with($rest, "[")) {
+            $end = strpos($rest, "]");
+            if ($end === false) break;
+            $key = substr($rest, 1, $end - 1);
+            $key = trim($key, "'\"");
+            $value = (is_array($value) && array_key_exists($key, $value)) ? $value[$key] : null;
+            $rest = substr($rest, $end + 1);
+            continue;
+         }
+
+         break;
+      }
+
+      return $value;
+   }
+   
+   /** Build cascaded values for a specific child. */
+   protected function ResolveCascadeFor(Component $child): array {
+      $ctx = $this->Cascaded; // inherit from parent
+      foreach ($this->Cascades as $key => $entry) {
+         if ($this->matches($child, $entry['for'])) {
+            $ctx[$key] = $entry['value'];
+         }
+      }
+      return $ctx;
    }
 }
 
+
+class LayoutComponent extends Component
+{
+   public Component $Child;
+
+   public function RenderChildContent(): string{
+      $this->Child->Parent = $this;
+      $this->Child->Cascaded = $this->ResolveCascadeFor($this->Child);
+      return $this->Child->Render();
+   }
+}
+
+class HostComponent extends LayoutComponent { }
 function str_replace_first($search, $replace, $subject)
 {
+   /** Replace only the first occurrence of a substring. */
    $search = '/' . preg_quote($search, '/') . '/';
    $res = preg_replace($search, $replace, $subject, 1);
    return $res;

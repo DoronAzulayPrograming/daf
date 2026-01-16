@@ -55,8 +55,6 @@ class CParser {
 
     private static function ParseComponent() : mixed {
 
-
-
         $markupStartPos = self::$CurrentPos - 1;
         $name = "";
         while (isset(self::$abc_chars[self::$CurrentChar]) || isset(self::$numbers_chars[self::$CurrentChar]) || self::$CurrentChar === "\\") {
@@ -89,7 +87,8 @@ class CParser {
                 $markupEndPos = self::$CurrentPos;
                 $markup = substr(self::$Text, $markupStartPos, $markupEndPos - $markupStartPos);
                 //echo htmlspecialchars($markup) . "<br>";
-                return new Component($name, $props, '', $markup);
+                //return new Component($name, $props, '', $markup);
+                return ['start' => $markupStartPos, 'end' => $markupEndPos, 'component' => new Component($name, $props, '', $markup)];
             }
         } else if(self::$CurrentChar == '>'){
             self::Advance();
@@ -97,26 +96,9 @@ class CParser {
 
             $name_len = strlen($name);
             $closeTag = 1;
-            // while(self::$CurrentChar !== CParser::CharNone && $closeTag > 0){
-            //     if(self::$CurrentChar === '<'){
-            //         self::Advance();
-            //         self::SkipSpace();
-            //         if(self::$CurrentChar === '/'){
-            //             self::Advance();
-            //             if(self::PeekWord($name_len) === $name){
-            //                 $closeTag--;
-            //                 if($closeTag === 0) $endContent = self::$CurrentPos - 2;
-            //                 self::Advance($name_len);
-            //             }
-            //         }else if(self::PeekWord($name_len) === $name){
-            //             $closeTag++;
-            //             self::Advance($name_len);
-            //         }
-            //     }
-            //     self::Advance();
-            // }
             while(self::$CurrentChar !== CParser::CharNone && $closeTag > 0){
                 if(self::$CurrentChar === '<'){
+
                     if(self::PeekWord($name_len+1) === "<".$name){
                         $closeTag++;
                     }
@@ -139,7 +121,7 @@ class CParser {
             $markup = substr(self::$Text, $markupStartPos, $markupEndPos - $markupStartPos);
 
             //echo htmlspecialchars($markup) ."<br>";
-            return new Component($name, $props, $markupContent, $markup);
+            return ['start' => $markupStartPos, 'end' => $markupEndPos, 'component' => new Component($name, $props, $markupContent, $markup)];
         }
 
         return null;

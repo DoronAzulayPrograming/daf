@@ -1,24 +1,30 @@
 <?php
-namespace DafGlobals;
+namespace DafGlobals\Collections;
 
 
 /**
- * @implements ICollection<int, mixed>
+ * @extends ReadOnlyCollection<int, mixed>
  */
 class Collection extends ReadOnlyCollection
 {
+    public function __construct(array $list = [])
+    {
+        parent::__construct($list);
+        $this->isMutable = true;
+    }
     /**
      * @param mixed $item The item to add to the collection
-     * @return void
+     * @return mixed
      */
-    function Add(mixed $item): void
+    function Add(mixed $item): mixed
     {
         if(is_array($item)){
-            $this->list = array_merge($this->list, $item);
-            return;
+            $this->list = array_values(array_merge($this->list, $item));
+            return $item;
         }
         
         $this->list[] = $item;
+        return $item;
     }
 
     /**
@@ -26,9 +32,10 @@ class Collection extends ReadOnlyCollection
      * @return void
      */
     function Remove(callable $callback) : void{
-        $this->list = array_filter($this->list ,function($item) use ($callback) {
+        $filterd = array_filter($this->list ,function($item) use ($callback) {
             return !$callback($item);
         });
+        $this->list = array_values($filterd);
     }
     function Clear(): void
     {

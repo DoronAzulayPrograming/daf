@@ -1,22 +1,25 @@
 <?php
-
-namespace DafGlobals;
+namespace DafGlobals\Collections;
 
 class ReadOnlyCollection implements ICollection
 {
     /** @var mixed[] $list */
-    private array $list = [];
+    protected array $list = [];
+    protected bool $isMutable = false;
 
     public function __construct(array $list = [])
     {
         $this->list = $list;
     }
-
+    protected function newCollection(array $items): ICollection
+    {
+        return $this->isMutable ? new Collection($items) : new ReadOnlyCollection($items);
+    }
     /**
      * @param mixed $item
      * @throws \Exception This collection is read only
      */
-    public function Add(mixed $item): void
+    public function Add(mixed $item): mixed
     {
         throw new \Exception("This collection is read only");
     }
@@ -41,11 +44,11 @@ class ReadOnlyCollection implements ICollection
 
     function Skip(int $length): ICollection
     {
-        return new Collection(array_slice($this->list, $length));
+        return $this->newCollection(array_slice($this->list, $length));
     }
     function Take(int $length): ICollection
     {
-        return new Collection(array_slice($this->list, 0, $length));
+        return $this->newCollection(array_slice($this->list, 0, $length));
     }
     function Any(callable $callback = null): bool
     {   
@@ -63,7 +66,7 @@ class ReadOnlyCollection implements ICollection
     function Count(callable $callback = null): int
     {
         if($callback !== null){
-            return $this->Map($callback)->Count();
+            return $this->Where($callback)->Count();
         }
 
         return count($this->list);
@@ -74,7 +77,7 @@ class ReadOnlyCollection implements ICollection
         foreach ($this->list as $key => $item) {
             $list[] = $callback($item, $key);
         }
-        return new Collection($list);
+        return $this->newCollection($list);
     }
     function ForEach(callable $callback) : void
     {
@@ -84,7 +87,7 @@ class ReadOnlyCollection implements ICollection
     }
     function Reverse(): ICollection
     {
-        return new Collection(array_reverse($this->list));
+        return $this->newCollection(array_reverse($this->list));
     }
 
     function FirstOrDefault(callable $callback = null): mixed
@@ -148,7 +151,7 @@ class ReadOnlyCollection implements ICollection
     function Where(callable $callback): ICollection
     {
         $list = array_filter($this->list, $callback, ARRAY_FILTER_USE_BOTH);
-        return new Collection($list);
+        return $this->newCollection($list);
     }
 
 

@@ -9,7 +9,9 @@ namespace DafDb;
  * @package DafDb
  */
 interface IRepository extends IQueryable
-{ }
+{
+   function GetLastInsertedId(): bool|string;
+}
 
 /**
  * Class Repository
@@ -28,12 +30,13 @@ class Repository extends Queryable implements IRepository
 
       $ref = new \ReflectionClass(get_called_class());
       $table_attr = $ref->getAttributes(Attributes\Table::class);
-      if(empty($table_attr))
+      if (empty($table_attr))
          throw new \Exception("Table attribute is missing");
 
       $attr_args = $table_attr[0]->getArguments();
-      $model = $attr_args['model'];
-      $name = isset($attr_args['name']) ? $attr_args['name'] : '';
+
+      $model = $attr_args['Model'] ?? $attr_args['model'] ?? $attr_args[1] ?? null;
+      $name = $attr_args['Name'] ?? $attr_args['name'] ?? $attr_args[0] ?? '';
 
       if (empty($name)) {
          $arr = explode("\\", $model);
@@ -50,6 +53,25 @@ class Repository extends Queryable implements IRepository
          throw new \Exception("Model class is missing");
 
       $this->LoadTableInfoFromClass($this->modelClass);
-      $this->CreateTable();
+
+      if (!$context->UseMigrations) {
+         // old behavior
+         $this->EnsureTableCreated();
+      }
+   }
+
+   public function GetTableName(): string
+   {
+      return $this->tableName;
+   }
+
+   public function GetModelClass(): string
+   {
+      return $this->modelClass;
+   }
+
+   public function GetLastInsertedId(): bool|string
+   {
+      return $this->connection->lastInsertId();
    }
 }

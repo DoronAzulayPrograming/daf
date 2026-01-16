@@ -1,5 +1,5 @@
 <?php
-/** @var DafCore\Component $this */
+/** @var DafCore\IComponent $this */
 $this->Use([
     'App\Views\Components\*',
     'App\Views\Components\NavTabs\*',

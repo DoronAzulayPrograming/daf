@@ -1,12 +1,12 @@
 <?php
-/** @var DafCore\Component $this */
+/** @var DafCore\IComponent $this */
 
-$this->SetAdditionalProps(['class' => 'card mb-3']);
+$this->AddAttributesToStart(['class' => 'card mb-3']);
 $lang = $this->Parameter("Lang") ?? "PHP";
 $copyBtn = $this->Parameter("Copy") ?? true;
 
 ?>
-<div <?=$this->GetAdditionalProps()?>>
+<div <?=$this->RenderAttributes()?>>
     <div class="card-header pe-2 d-flex justify-content-between align-items-center">
         <span><?=$lang?></span>
         <?php if($copyBtn){?>
@@ -15,7 +15,7 @@ $copyBtn = $this->Parameter("Copy") ?? true;
     </div>
     <div class="card-body">
         <p style="font-family: Menlo, Monaco, 'Courier New', monospace;">
-            <?=$this->ChildContent?>
+            <?=$this->RenderChildContent()?>
         </p>
     </div>
 </div>

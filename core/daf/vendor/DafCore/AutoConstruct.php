@@ -8,6 +8,8 @@ class AutoConstruct implements \JsonSerializable
 {
     public function __construct()
     {
+        $this->onLoad();
+
         $arguments = func_get_args();
         $numberOfArguments = func_num_args();
 
@@ -16,53 +18,14 @@ class AutoConstruct implements \JsonSerializable
             $fn = "__construct" . $numberOfArguments
         );
 
-        $this->onLoad();
-
         if ($constructor) {
             call_user_func_array([$this, $fn], $arguments);
+        } else if ($numberOfArguments < 1) {
+            $this->onAfterLoad();
+        } else if ($this->isAssociativeArray($arguments[0] ?? null)) {
+            $this->initializeFromNamedArray($arguments[0]);
         } else {
-
-            if ($numberOfArguments < 1){
-                $this->onAfterLoad();
-                return;
-            }
-
-            // Check if the first argument is an associative array for named initialization
-            if (isset($arguments[0]) && is_array($arguments[0]) && count(array_filter(array_keys($arguments[0]), 'is_string')) > 0) {
-                
-                foreach ($arguments[0] as $key => $value) {
-                    // Use setter method if available, otherwise assign directly
-                    $setter = "set" . ucfirst($key);
-                   try {
-                        if (method_exists($this, $setter)) {
-                            $this->$setter($value);
-                        } elseif (property_exists($this, $key)) {
-                            $this->$key = $value;
-                        }
-                   } catch (\Throwable $th) {
-                    //throw $th;
-                   }
-                }
-            } else {
-                // If positional arguments, match them to properties in the order defined in the class
-                $properties = array_keys(get_class_vars(get_called_class()));
-                
-                foreach ($arguments as $index => $value) {
-                    try {
-                        if (isset($properties[$index])) {
-                            $key = $properties[$index];
-                            $setter = "set" . ucfirst($key);
-                            if (method_exists($this, $setter)) {
-                                $this->$setter($value);
-                            } elseif (property_exists($this, $key)) {
-                                $this->$key = $value;
-                            }
-                        }
-                    } catch (\Throwable $th) {
-                        //throw $th;
-                    }
-                }
-            }
+            $this->initializeFromPositionalArray($arguments);
         }
         
         $this->onAfterLoad();
@@ -95,6 +58,87 @@ class AutoConstruct implements \JsonSerializable
         }
         return $data;
     }
+
+    function initializeProperties(): self
+    {
+        $reflection = new \ReflectionClass($this);
+    
+        foreach ($reflection->getProperties() as $property) {
+            if (!$property->isPublic() || $property->isInitialized($this)) {
+                continue;
+            }
+    
+            $type = $property->getType();
+            $default = null;
+    
+            if ($type instanceof \ReflectionNamedType) {
+                $typeName = $type->getName();
+    
+                if ($type->isBuiltin()) {
+                    $default = match ($typeName) {
+                        'int' => 0,
+                        'float' => 0.0,
+                        'string' => '',
+                        'bool' => false, // or false — change this based on your preference
+                        'array' => [], // or false — change this based on your preference
+                        default => null
+                    };
+                } elseif (class_exists($typeName)) {
+                    try {
+                        $default = new $typeName();
+                    } catch (\Throwable) {
+                        // leave null
+                    }
+                }
+            }
+    
+            $property->setValue($this, $default);
+        }
+        return $this;
+    }
+    private function initializeFromPositionalArray(array $args): void
+    {
+        $properties = array_keys(get_class_vars(get_called_class()));
+
+        foreach ($args as $i => $value) {
+            $key = $properties[$i] ?? null;
+            if (!$key) continue;
+
+            $setter = "set" . ucfirst($key);
+
+            try {
+                if (method_exists($this, $setter)) {
+                    $this->$setter($value);
+                } elseif (property_exists($this, $key)) {
+                    $this->$key = $value;
+                }
+            } catch (\Throwable) {
+                // Silent fail for safety
+            }
+        }
+    }
+    private function initializeFromNamedArray(array $data): void
+    {
+        foreach ($data as $key => $value) {
+            $setter = "set" . ucfirst($key);
+
+            try {
+                if (method_exists($this, $setter)) {
+                    $this->$setter($value);
+                } elseif (property_exists($this, $key)) {
+                    $this->$key = $value;
+                }
+            } catch (\Throwable) {
+                // Silent fail for safety
+            }
+        }
+    }
+    private function isAssociativeArray($value): bool
+    {
+        return is_array($value) && count(array_filter(array_keys($value), 'is_string')) > 0;
+    }
+
+
 }
 
 namespace DafCore\AutoConstruct;

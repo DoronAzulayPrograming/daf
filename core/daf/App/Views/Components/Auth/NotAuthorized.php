@@ -1,3 +1,3 @@
 <?php
-/** @var DafCore\Component $this  */
-echo $this->ChildContent;
+/** @var DafCore\IComponent $this  */
+echo $this->RenderChildContent();

@@ -5,9 +5,10 @@ class Session
 {
     public function __construct(IViewManager $vm) {
         $vm->OnAfterRender(function(){
-            if(isset($_SESSION['flush_list'])){
-                unset($_SESSION['flush_list']);
-            }
+            // if(isset($_SESSION['flush_list'])){
+            //     unset($_SESSION['flush_list']);
+            // }
+            $this->ClearFlush();
         });
     }
 
@@ -79,6 +80,73 @@ class Session
         return true;
     }
 
+    function AddFlushMsg(string $value): void {
+        if (headers_sent()) {
+            throw new \Exception('Cannot set session variable after the response has been sent');
+        }
+
+        if(!isset($_SESSION['flush_list']))
+            $_SESSION['flush_list'] = [];
+
+        if(!isset($_SESSION['flush_list']["flush_msgs"]))
+            $_SESSION['flush_list']["flush_msgs"] = [];
+        
+        $_SESSION['flush_list']["flush_msgs"][] = $value;
+    }
+    function SetFlushMsgs(array $value): void {
+        if (headers_sent()) {
+            throw new \Exception('Cannot set session variable after the response has been sent');
+        }
+
+        if(!isset($_SESSION['flush_list']))
+            $_SESSION['flush_list'] = [];
+
+        if(!isset($_SESSION['flush_list']["flush_msgs"]))
+            $_SESSION['flush_list']["flush_msgs"] = [];
+        
+        $_SESSION['flush_list']["flush_msgs"] = $value;
+    }
+    function TryGetFlushMsgs(&$msgs) : bool {
+        if($this->TryGetFlushValue("flush_msgs", $msgs)){
+            return true;
+        }
+
+        return false;
+    }
+
+    function AddFlushError(string $value): void {
+        if (headers_sent()) {
+            throw new \Exception('Cannot set session variable after the response has been sent');
+        }
+
+        if(!isset($_SESSION['flush_list']))
+            $_SESSION['flush_list'] = [];
+
+        if(!isset($_SESSION['flush_list']["flush_errors"]))
+            $_SESSION['flush_list']["flush_errors"] = [];
+        
+        $_SESSION['flush_list']["flush_errors"][] = $value;
+    }
+    function SetFlushErrors(array $value): void {
+        if (headers_sent()) {
+            throw new \Exception('Cannot set session variable after the response has been sent');
+        }
+
+        if(!isset($_SESSION['flush_list']))
+            $_SESSION['flush_list'] = [];
+
+        if(!isset($_SESSION['flush_list']["flush_errors"]))
+            $_SESSION['flush_list']["flush_errors"] = [];
+        
+        $_SESSION['flush_list']["flush_errors"] = $value;
+    }
+    function TryGetFlushErrors(&$msgs) : bool {
+        if($this->TryGetFlushValue("flush_errors", $msgs)){
+            return true;
+        }
+
+        return false;
+    }
 
     function SetFlush(string $key, $value): void {
         if (headers_sent()) {
@@ -99,6 +167,16 @@ class Session
         }
 
         $value = $_SESSION['flush_list'][$key];
+        return true;
+    }
+    function TryGetFlushValueFromJson(string $key, &$value, $toArray = false): bool
+    {
+        if (!isset($_SESSION['flush_list']) || !isset($_SESSION['flush_list'][$key])) {
+            return false;
+        }
+
+        $flush_value = $_SESSION['flush_list'][$key];
+        $value = json_decode($flush_value, $toArray);
         return true;
     }
     function RemoveFlushValue(string $key): void {

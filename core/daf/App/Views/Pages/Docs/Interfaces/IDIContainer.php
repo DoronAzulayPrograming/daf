@@ -1,7 +1,3 @@
-<?php
-DafCore\ViewManager::$layout = "DocsLayout";
-?>
-
 <h1>DIContainer Interface</h1>
 <br>
 <h3>Definition</h3>

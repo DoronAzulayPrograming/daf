@@ -1,5 +1,5 @@
 <?php
-/** @var DafCore\Component $this */
+/** @var DafCore\IComponent $this */
 /** @var DafCore\IViewManager $vm */
 $vm = $this->Inject(\DafCore\IViewManager::class);
 
@@ -40,7 +40,7 @@ $vm = $this->Inject(\DafCore\IViewManager::class);
       </ul>
       <div class="d-flex">
         <ul class="navbar-nav mb-lg-0">
-            <AuthorizedView>
+            <AuthorizedView> 
                 <Authorized>
                     <li class="nav-item">
                         <form class="d-inline" action="/Accounts/Logout" method="POST">

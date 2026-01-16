@@ -12,7 +12,7 @@ class BuildPhar
    * @param $_sourceDirectory       // This is the directory where your project is stored.
    * @param $stubFile               // Name the entry point for your phar file. This file have to be within the source
    *                                   directory. 
-   * @param NULL $_outputDirectory  // Directory where the phar file will be placed.
+   * @param string $_outputDirectory  // Directory where the phar file will be placed.
    * @param string $pharFileName    // Name of your final *.phar file.
    */
   public function __construct($_sourceDirectory, $stubFile, $_outputDirectory = null, $pharFileName = 'myPhar.phar') {

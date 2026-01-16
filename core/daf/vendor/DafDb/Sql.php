@@ -61,6 +61,19 @@ class Sql
       return ['query'=>$query, 'params'=>$params];
    }
 
+   static function Update(string $table, array $data){
+      $query = "UPDATE $table SET ";
+      $params = [];
+      $setClauses = [];
+      foreach ($data as $key => $value) {
+         $setClauses[] = "`$key` = :$key";
+         $params[":$key"] = $value;
+      }
+      $query .= implode(', ', $setClauses);
+
+      return ['query'=>$query, 'params'=>$params];
+   }
+
    static function Where(callable $func)
    {
       $conditionsSql = self::ParseWhere($func);

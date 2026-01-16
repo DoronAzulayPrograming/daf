@@ -1,5 +1,5 @@
 <?php
-/** @var DafCore\Component $this */
+/** @var DafCore\IComponent $this */
 $this->Use("App\Views\_Layouts\NavBar");
 ?>
 
@@ -8,5 +8,5 @@ $this->Use("App\Views\_Layouts\NavBar");
 </div>
 
 <div class="container-md pt-3">
-    <?= $Body ?>
+    <Body />
 </div>

@@ -5,13 +5,13 @@ class Validator{
 
     public static array $errorMsgs = [];
 
-    public static function Validate($object): bool {
-        list($isValid, $em) = self::validateObject($object);
+    public static function Validate($object, $deep = false): bool {
+        list($isValid, $em) = self::validateObject($object, '', $deep);
         self::$errorMsgs = $em;
         return $isValid;
     }
 
-    private static function validateObject($object, $path = ''): array {
+    private static function validateObject($object, $path = '', $deep = false): array {
         $reflector = new \ReflectionClass($object);
         $properties = $reflector->getProperties();
         $isValid = true;
@@ -35,7 +35,7 @@ class Validator{
                 $propertyPath = $path ? "$path.{$property->getName()}" : $property->getName();
                 
                 if (is_object($value)) {
-                    list($isPropValid, $propErrorMsgs) = self::validateObject($value, $propertyPath);
+                    list($isPropValid, $propErrorMsgs) = self::validateObject($value, $propertyPath, $deep);
                     $isValid = $isValid && $isPropValid;
                     $errorMsgs = array_merge($errorMsgs, $propErrorMsgs);
                 } else{
@@ -50,7 +50,7 @@ class Validator{
                     }
                 }
 
-                if($isValid === false) break;
+                if($deep === false && $isValid === false) break;
             }
         }
     

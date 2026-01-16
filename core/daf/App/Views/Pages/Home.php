@@ -1,5 +1,7 @@
 <PageTitle>DAF - Home</PageTitle>
 
+<Alert Msg="Hello" />
+
 <section class="pt-2">
     <div class="d-grid justify-content-center">
         <div>

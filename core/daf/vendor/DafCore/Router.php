@@ -1,7 +1,7 @@
 <?php
 namespace DafCore;
 
-use DafGlobals\Collection;
+use DafGlobals\Collections\Collection;
 use DafCore\Controllers\Controller;
 use DafCore\Controllers\ApiController;
 use DafCore\Controllers\BaseController;
@@ -30,6 +30,8 @@ class Router
         \DafCore\Controllers\Attributes\HttpDelete::class => 1
     ];
 
+    private array $pendingControllers = [];
+    private array $route_cache_meta = [];
 
     public function __construct(ServicesProvidor $sp, ApplicationContext $context, ViewManager $viewManager)
     {
@@ -57,81 +59,206 @@ class Router
         return str_replace($search_text, "", substr($classNameSpace, strrpos($classNameSpace, "\\") + 1));
     }
 
-    function AddController(string $controllerClass){
-        $reflection = new \ReflectionClass($controllerClass);
-        $ref_attrs = $reflection->getAttributes();
-        $attributes = new Collection($ref_attrs);
-        $routeAttr = $attributes->SingleOrDefault(fn($attr) => $attr->getName() === Route::class);
-       
-        if($routeAttr === null) return;
-        $routeIns = $routeAttr->newInstance();
 
+    private function buildBasePath(string $controllerClass, $routeIns): string
+    {
         $path = $routeIns->Path ?? "";
         $prefix = $routeIns->Prefix ?? "";
-        $path = !empty($path) ? $path : $this->getControllerName($controllerClass);
 
-        if(str_starts_with($path, "/") === false)
-            $path = "/".$path;
-        
-        if(!empty($prefix))
-            $path = "/" .$prefix.$path;
-        
-        $methods = $reflection->getMethods();
-        $methods = (new Collection($methods))->Where(fn($method) => strcmp($method->name, "__construct") !== 0 && strcmp($method->class, $controllerClass) === 0 );
-        $routeList = &$this->routes;
+        if (empty($path)) {
+            $path = $this->getControllerName($controllerClass);
+        }
 
-        $http_methods_class_names = $this->http_methods_class_names;
+        if (!str_starts_with($path, "/")) {
+            $path = "/" . $path;
+        }
 
-        $class_middlewares = [];
-        $attributes->ForEach(function($attr) use(&$class_middlewares, $http_methods_class_names){
-            $an = $attr->getName();
-            if(!isset($http_methods_class_names[$an])){
-                $ins = $attr->newInstance();
-                if(method_exists($ins,'Handle'))
-                    $class_middlewares[] = [$ins, 'Handle'];
-            }
-        });
+        if (!empty($prefix)) {
+            $path = "/" . trim($prefix, "/") . $path;
+        }
 
-        $methods->ForEach(function($method) use($class_middlewares, $path, $controllerClass, &$routeList){
-            $middlewares = [];
-            $methodAttributes = new Collection($method->getAttributes());
-            $httpAttribute = $methodAttributes->SingleOrDefault(function($attr){ 
-                $an = $attr->getName();
-                if($an === \DafCore\Controllers\Attributes\HttpGet::class || 
-                    $an === \DafCore\Controllers\Attributes\HttpPut::class ||
-                    $an === \DafCore\Controllers\Attributes\HttpPost::class ||
-                    $an === \DafCore\Controllers\Attributes\HttpDelete::class
-                )
-                    return true;
-
-                return false;
-            });
-
-            if($httpAttribute === null) return;
-            $httpAttributeIns = $httpAttribute->newInstance();
-
-            $arr = explode("\\", $httpAttribute->getName());
-
-            $http_method = strtolower(str_replace("Http", "",end($arr)));
-            $method_path = $httpAttributeIns->Path ?? null;
-            $route_path = $path. (empty($method_path) ? "" : "/".$method_path);
-            $route_path = str_replace("//", "/", $route_path);
-            
-            $http_methods_class_names = $this->http_methods_class_names;
-
-            $methodAttributes->ForEach(function($attr) use(&$middlewares, $http_methods_class_names){
-                $an = $attr->getName();
-                $this->context->endPointMetadata[$an] = 1;
-                if(!isset($http_methods_class_names[$an])){
-                    $ins = $attr->newInstance();
-                    if(method_exists($ins,'handle'))
-                        $middlewares[] = [$ins, 'handle'];
-                }
-            });
-            $middlewares[] = [$controllerClass, $method->name];
-            $routeList[$http_method][$route_path] = array_merge($class_middlewares, $middlewares);
-        });
+        return $path;
     }
+    private function extractMiddlewares(Collection $attributes): array
+    {
+        $middlewares = [];
+        foreach ($attributes as $attr) {
+            $name = $attr->getName();
+            if (!isset($this->http_methods_class_names[$name])) {
+                $instance = $attr->newInstance();
+                if (method_exists($instance, 'Handle')) {
+                    $middlewares[] = [$instance, 'Handle'];
+                }
+            }
+        }
+        return $middlewares;
+    }
+
+    private function class_basename($class): string
+    {
+        return basename(str_replace('\\', '/', $class));
+    }
+    private function processControllerMethod($method, string $controllerClass, string $basePath, array $classMiddlewares): void
+    {
+        $methodAttributes = new Collection($method->getAttributes());
+        $httpAttr = $methodAttributes->SingleOrDefault(fn($attr) => isset($this->http_methods_class_names[$attr->getName()]));
+
+        if ($httpAttr === null) return;
+
+        $httpAttrInstance = $httpAttr->newInstance();
+        $httpMethod = strtolower(str_replace("Http", "", $this->class_basename($httpAttr->getName())));
+
+        $methodPath = $httpAttrInstance->Path ?? "";
+        $routePath = rtrim($basePath . "/" . $methodPath, "/");
+        $routePath = str_replace("//", "/", $routePath);
+
+        $middlewares = $this->extractMiddlewares($methodAttributes);
+        $middlewares[] = [$controllerClass, $method->name];
+
+        $this->routes[$httpMethod][$routePath] = array_merge($classMiddlewares, $middlewares);
+    }
+
+    function AddController(string $controllerClass){
+        
+        $reflection = new \ReflectionClass($controllerClass);
+        $this->AddRoutesCacheDependency($reflection->getFileName());
+        $attributes = new Collection($reflection->getAttributes());
+
+        $routeAttr = $attributes->SingleOrDefault(fn($attr) => $attr->getName() === Route::class);
+        if ($routeAttr === null) return;
+
+        $routeIns = $routeAttr->newInstance();
+        $basePath = $this->buildBasePath($controllerClass, $routeIns);
+        
+        $classMiddlewares = $this->extractMiddlewares($attributes);
+
+        $methods = (new Collection($reflection->getMethods()))
+            ->Where(fn($method) => $method->name !== '__construct' && $method->class === $controllerClass);
+    
+        foreach ($methods as $method) {
+            $this->processControllerMethod($method, $controllerClass, $basePath, $classMiddlewares);
+        }
+    }
+    public function LoadAllPendingControllers(): void
+    {
+        while (!empty($this->pendingControllers)) {
+            $controller = array_shift($this->pendingControllers);
+            $this->AddController($controller);
+        }
+    }
+
+
+    public function AddRoutesCacheDependency(string $file): void
+    {
+        if (is_file($file)) {
+            $this->route_cache_meta[$file] = filemtime($file) ?: 0;
+        }
+    }
+
+    private function isCacheMetaValid(array $meta): bool
+    {
+        foreach ($meta as $file => $mtime) {
+            if (!is_file($file) || (filemtime($file) ?: 0) !== $mtime) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public function LoadRoutesCache(string $cacheFile): bool
+    {
+        if (!file_exists($cacheFile)) {
+            return false;
+        }
+        $data = include $cacheFile;
+        if (!is_array($data) || !isset($data['routes'])) {
+            return false;
+        }
+        $meta = $data['meta'] ?? [];
+        if (is_array($meta) && !$this->isCacheMetaValid($meta)) {
+            return false;
+        }
+
+        // Merge cached routes into existing ones (keep existing if same key)
+        foreach ($data['routes'] as $method => $routesByPath) {
+            if (!isset($this->routes[$method])) {
+                $this->routes[$method] = [];
+            }
+            $this->routes[$method] = $this->routes[$method] + $routesByPath;
+        }
+
+        $this->route_cache_meta = is_array($meta) ? $meta : [];
+
+        // Prevent lazy loading from re-reflecting controllers
+        if (property_exists($this, 'pendingControllers')) {
+            $this->pendingControllers = [];
+        }
+
+        return true;
+    }
+
+    private function isCacheablePipeline(array $pipeline): bool
+    {
+        foreach ($pipeline as $step) {
+            if ($step instanceof \Closure) {
+                return false;
+            }
+            if (is_array($step) && isset($step[0]) && $step[0] instanceof \Closure) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public function SaveRoutesCache(string $cacheFile): void
+    {
+        $dir = dirname($cacheFile);
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+
+        $cacheRoutes = [];
+        foreach ($this->routes as $method => $routesByPath) {
+            foreach ($routesByPath as $path => $pipeline) {
+                if ($this->isCacheablePipeline($pipeline)) {
+                    $cacheRoutes[$method][$path] = $pipeline;
+                }
+            }
+        }
+
+        $payload = [
+            'routes' => $cacheRoutes,
+            'meta' => $this->route_cache_meta,
+        ];
+
+        $serialized = serialize($payload);
+        $content = "<?php\nreturn unserialize(" . var_export($serialized, true) . ");\n";
+        file_put_contents($cacheFile, $content);
+    }
+
+    public function RegisterControllers(array $controllers): void
+    {
+        foreach ($controllers as $controller) {
+            if (is_string($controller)) {
+                $this->pendingControllers[] = $controller;
+            }
+        }
+    }
+
+    private function tryResolveFromPending(string $method, string $path): array|bool
+    {
+        while (!empty($this->pendingControllers)) {
+            $controller = array_shift($this->pendingControllers);
+            $this->AddController($controller);
+
+            $pipeline = $this->getRoute($method, $path);
+            if ($pipeline !== false) {
+                return $pipeline;
+            }
+        }
+        return false;
+    }
+
 
     private function MakePath(string $path) : string {
         if($path === "/" && !empty($this->routeBasePath))
@@ -142,43 +269,35 @@ class Router
         $ep = end($pipline);
         if(is_callable($ep)){
             $ref = new \ReflectionFunction($ep);
-            $ref_attrs = $ref->getAttributes();
-            $attributes = new Collection($ref_attrs);
+            $attributes = new Collection($ref->getAttributes());
 
-            $middlewares = [];
-            $http_methods_class_names = $this->http_methods_class_names;
-            $attributes->ForEach(function($attr) use(&$middlewares, $http_methods_class_names){
-                $an = $attr->getName();
-                $this->context->endPointMetadata[$an] = 1;
-                if(!isset($http_methods_class_names[$an])){
-                    $ins = $attr->newInstance();
-                    if(method_exists($ins,'handle'))
-                        $middlewares[] = [$ins, 'handle'];
-                }
-            });
+            $middlewares = $this->extractMiddlewares($attributes);
+
             array_pop($pipline);
             return array_merge($pipline, $middlewares, [$ep]);
         }
         return $pipline;
     }
-    function Get($path, ...$callback)
-    {
-        $this->routes['get'][$this->MakePath($path)] = $this->GetTransfromAttrToMiddlewheres($callback);
-    }
 
-    function Put($path, ...$callback)
-    {
-        $this->routes['put'][$this->MakePath($path)] = $this->GetTransfromAttrToMiddlewheres($callback);
+    private function addRoute(string $method, string $path, array $callbacks){
+        $this->routes[$method][$this->MakePath($path)] = $this->GetTransfromAttrToMiddlewheres($callbacks);
     }
-
-    function Post($path, ...$callback)
+    
+    function Get($path, ...$callback): void
     {
-        $this->routes['post'][$this->MakePath($path)] = $this->GetTransfromAttrToMiddlewheres($callback);
+        $this->addRoute('get', $path, $callback);
     }
-
-    function Delete($path, ...$callback)
+    function Put($path, ...$callback): void
     {
-        $this->routes['delete'][$this->MakePath($path)] = $this->GetTransfromAttrToMiddlewheres($callback);
+        $this->addRoute('put', $path, $callback);
+    }
+    function Post($path, ...$callback): void
+    {
+        $this->addRoute('post', $path, $callback);
+    }
+    function Delete($path, ...$callback): void
+    {
+        $this->addRoute('delete', $path, $callback);
     }
     
     private function capitalizePath($path) : string {
@@ -189,24 +308,82 @@ class Router
         
         return implode('/', $capitalizedSegments); // Reassemble the path
     }
-    private function getRoute($method, $path) : array | bool
-    {
-        if (empty(count($this->routes)))
-            return false;
 
-        if (isset($this->routes[$method][$path])) {
-            return $this->routes[$method][$path];
-        } else {
-            $temp_path = strtolower($path);
-            if (isset($this->routes[$method][$temp_path])) {
-                return $this->routes[$method][$temp_path];
-            } else {
-                $temp_path = $this->capitalizePath($temp_path);
-                if (isset($this->routes[$method][$temp_path])) {
-                    return $this->routes[$method][$temp_path];
-                }
+    private function getRoute(string $method, string $path): array|bool
+    {
+        $candidates = $this->normalizeRouteCandidates($path);
+
+        foreach ($candidates as $candidate) {
+            if (isset($this->routes[$method][$candidate])) {
+                return $this->routes[$method][$candidate];
             }
         }
+
+        return $this->matchParameterizedRoute($method, $candidates[0]);
+    }
+
+    private function normalizeRouteCandidates(string $path): array
+    {
+        $trimmed = '/' . trim($path, '/');
+        if ($trimmed === '//') {
+            $trimmed = '/';
+        }
+
+        $lower = strtolower($trimmed);
+        $capitalized = $this->capitalizePath($lower);
+
+        return array_unique([$trimmed, $lower, $capitalized]);
+    }
+
+    private function matchParameterizedRoute(string $method, string $path): array|bool
+    {
+        foreach ($this->routes[$method] ?? [] as $routePath => $pipeline) {
+            if (strpos($routePath, ':') === false) {
+                continue;
+            }
+
+            $routeSegments = explode('/', $routePath);
+            $pathSegments = explode('/', $path);
+
+            if (count($routeSegments) !== count($pathSegments)) {
+                continue;
+            }
+
+            $params = [];
+            $match = true;
+
+            foreach ($routeSegments as $idx => $segment) {
+                $value = $pathSegments[$idx];
+                if (str_starts_with($segment, ':')) {
+                    $params[substr($segment, 1)] = $value;
+                    continue;
+                }
+
+                if (strcasecmp($segment, $value) !== 0) {
+                    $match = false;
+                    break;
+                }
+            }
+
+            if ($match) {
+                $this->route_params = $params;
+                $this->context->request->SetRouteParams($params);
+                return $pipeline;
+            }
+        }
+
+        return false;
+    }
+
+    private function getRouteOld($method, $path) : array | bool
+    {
+        if (isset($this->routes[$method][$path])) return $this->routes[$method][$path];
+
+        $temp_path = strtolower($path);
+        if (isset($this->routes[$method][$temp_path])) return $this->routes[$method][$temp_path];
+
+        $temp_path = $this->capitalizePath($temp_path);
+        if (isset($this->routes[$method][$temp_path])) return $this->routes[$method][$temp_path];
 
         foreach ($this->routes[$method] as $key => $value) {
             if (strpos($key, ":") !== false) {
@@ -239,11 +416,7 @@ class Router
     }
 
     public function Resolve(): string | null
-    {
-        //adding some object to the end of the pipline because 
-        //the last one not trigger (for more look in handleMiddlewares func)
-        $this->middlewares[] = false; 
-
+    {   
         //run the pipline for global middlewares
         $this->handleMiddlewares();
         
@@ -254,8 +427,16 @@ class Router
         //get the current route pipline array 
         $rotePipeline = $this->getRoute($method, $path);
 
+        if ($rotePipeline === false && !empty($this->pendingControllers)) {
+            $rotePipeline = $this->tryResolveFromPending($method, $path);
+        }
+
         //if false no route found
         if ($rotePipeline === false) {
+            if(file_exists("App/Views/_ErrorPage.php")){
+                $this->context->response->Status(Response::HTTP_NOT_FOUND);
+                return $this->viewManager->SetLayout('none')->RenderView('_ErrorPage', ["Status"=> 404,"Msg"=>"404 - Route Not Found"]);
+            }
             return $this->context->response
                 ->Status(Response::HTTP_NOT_FOUND)
                 ->Send("404 - Route Not Found");
@@ -264,7 +445,7 @@ class Router
         $this->middlewares = $rotePipeline;
 
         //get the route endpoint
-        $ep = end($this->middlewares);
+        $ep = array_pop($this->middlewares);
         
         //if the endpoint is array of [class_name, method_name] load it
         if (is_array($ep)) {
@@ -273,37 +454,24 @@ class Router
         }else{
             $this->context->endPoint = $ep;
         }
+        
+        $this->endPoint = $ep;
+        $this->middlewares[] = $this->wrapEndpoint($this->endPoint);
 
         //run route middlewares pipline
-        $this->handleMiddlewares();
-
-        //if the endpoint is array of [class_name, method_name] set the endpoit to the current one
-        if (is_array($this->endPoint)) {
-            $this->setControllerAsEndPoint($this->endPoint);
-        }
-
-        if(is_string($this->endPoint)){
-            return $this->viewManager->RenderView($this->endPoint);
-        }
-        
-        if (!is_callable($this->endPoint)) {
-            return "";
-        }
-
-        //run the endpoint
-        return $this->invokeEndPoint($this->endPoint);
+        $sr = $this->handleMiddlewares();
+        return $sr;
     }
+    
 
-    private function handleMiddlewares()
+
+    private function handleMiddlewares(): string
     {
-        $middleware = array_shift($this->middlewares) ?? null;
+        $middleware = array_shift($this->middlewares);
+        
+        if (!$middleware) return '';
 
-        if ($middleware) {
-            if (!count($this->middlewares))
-                $this->endPoint = $middleware;
-            else
-                $this->invokeEndPoint($middleware, fn() => $this->handleMiddlewares());
-        }
+        return $this->invokeEndPoint($middleware, fn() => $this->handleMiddlewares());
     }
 
     private function invokeEndPoint(callable $endPoint, callable $next = null): string
@@ -318,6 +486,21 @@ class Router
         }
         return "";
     }
+
+    private function wrapEndpoint(string|array|callable $endpoint): callable
+    {
+        if (is_string($endpoint)) {
+            return fn() => $this->viewManager->RenderView($endpoint);
+        }
+
+        if (is_array($endpoint)) {
+            $callable = [$this->controller, $endpoint[1]];
+            return fn() => $this->invokeEndPoint($callable);
+        }
+
+        return fn() => $this->invokeEndPoint($endpoint);
+    }
+
 
     private function loadControllerToDic(string $controllerClass)
     {
@@ -335,11 +518,6 @@ class Router
 
         $this->controller = $controller;
     }
-    private function setControllerAsEndPoint(array $endPoint)
-    {
-        $method = $endPoint[1];
-        $this->endPoint = [$this->controller, $method];
-    }
 
     private function getEndPointDependeces(callable $endPoint): array
     {
@@ -347,15 +525,16 @@ class Router
         
         return $this->sp->getServicesForCallback($endPoint, onNotFound: function (\ReflectionParameter $param, $sp) use($additionalParameters) {
             $pn = $param->getName();
-            $pt = $param->getType()?->getName() ?? "";
-
+            $type = $param->getType();
+            $pt = $type instanceof \ReflectionNamedType ? $type->getName() ?? "" : "";
+            
             if (isset ($additionalParameters[$pn]))
                 return $additionalParameters[$pn];
             else if (strlen($pt)) {
                 if (is_subclass_of($pt, \DafCore\AutoConstruct::class)) {
-                    /** @var IRequest $req*/
 
                     try {
+                        /** @var IRequest $req*/
                         $req = $sp->getOne(IRequest::class);
                         $obj = new $pt($req->GetBodyArray());
                         $param->getAttributes();

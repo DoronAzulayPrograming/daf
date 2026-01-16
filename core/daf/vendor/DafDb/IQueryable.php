@@ -1,7 +1,7 @@
 <?php
 namespace DafDb;
 
-use DafGlobals\ICollection;
+use DafGlobals\Collections\ICollection;
 
 interface IQueryable
 {
@@ -11,6 +11,13 @@ interface IQueryable
     * @return void
     */
    function Add(object|array $data);
+
+   /**
+    * @param object|array $data The data to update in the collection
+    * @param callable $func A function to test each element for a condition
+    * @return void
+    */
+   function Update(object|array $data, callable $func = null);
 
    /**
     * @param callable $objOrfunc A function to test each element for a condition or an object to remove

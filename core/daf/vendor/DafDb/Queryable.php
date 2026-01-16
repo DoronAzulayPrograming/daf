@@ -1,8 +1,8 @@
 <?php
 namespace DafDb;
 
-use DafGlobals\ICollection;
-use DafGlobals\ReadOnlyCollection;
+use DafGlobals\Collections\ICollection;
+use DafGlobals\Collections\ReadOnlyCollection;
 
 abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSerializable
 {
@@ -25,16 +25,28 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
     ];
 
     private array $tableInfo = [
-        'fields' => [],
+        'columns' => [],
+        'columnTypes' => [],
         'primaryKeys' => [],
-        'foreignKeys' => []
+        'foreignKeys' => [],
+        'includes' => []
     ];
 
     private array $includes = [];
     private bool $rowToArray = false;
 
+
+    private bool $expectAliasedResult = false;
+    private int $includeAliasCounter = 0;
+
+    /** @var array<string,array> */
+    private static array $modelMetadataCache = [];
+    /** @var array<string,bool> */
+    private static array $modelMetadataInProgress = [];
+
+
     public function __construct(Context $context)
-    {
+    {   
         try {
             $this->context = $context;
             $this->connection = $this->context->GetConnection();
@@ -43,7 +55,14 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
         }
     }
 
-    private function Reset()
+
+    public function GetTableName(): string { return $this->tableName; }
+    public function GetContext(): Context { return $this->context; }
+    public function GetStatement(): \PDOStatement{
+        return $this->stmt;
+    }
+
+    public function Reset()
     {
         $this->global_data = [
             'select' => '',
@@ -58,19 +77,39 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
         ];
         $this->includes = [];
         $this->rowToArray = false;
+
+        $this->includeAliasCounter = 0;
+        $this->expectAliasedResult = false;
     }
-    function Execute(string $query, ...$params)
+    public function Execute(string $query, ...$params)
     {
+        if(Context::$Show_Queary){
+            var_dump($query);
+            var_dump($params);
+        }
+
         $result = $this->stmt = $this->connection->prepare($query);
         foreach ($params as $key => $value) {
-            $this->stmt->bindValue($key, $value);
+            if (is_bool($value)) {
+                $this->stmt->bindValue($key, $value ? 1 : 0, \PDO::PARAM_INT);
+            } elseif (is_int($value)) {
+                $this->stmt->bindValue($key, $value, \PDO::PARAM_INT);
+            } elseif (is_null($value)) {
+                $this->stmt->bindValue($key, null, \PDO::PARAM_NULL);
+            } else {
+                $this->stmt->bindValue($key, $value, \PDO::PARAM_STR);
+            }
         }
+        
+        // foreach ($params as $key => $value) {
+        //     $this->stmt->bindValue($key, $value);
+        // }
         $result = $this->stmt->execute();
         if ($result === false) {
             $this->context->Error("Error executing query: ", $this->stmt->errorInfo());
         }
     }
-    function Fetch() : mixed
+    public function Fetch() : mixed
     {
         $result = [];
         $this->FetchAll(callback: function($item) use (&$result){
@@ -83,124 +122,198 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
 
         return $result[0];
     }
-    function FetchAll(callable $callback = null) : array {
+    public function FetchAll(callable $callback = null): array {
         $list = [];
         $toArray = $this->rowToArray;
-
+    
         $currentId = null;
         $data = [];
         
-        while($row = $this->stmt->fetch()){
-            $tempId = $this->getUniqId($row, $this->tableName, $this->modelClass);
-            if($currentId !== $tempId){
-                $currentId = $tempId;
+        $useAlias = $this->expectAliasedResult;
 
-                if($this->global_data['skip'] !== null && $this->global_data['skip'] > 0){
+        while ($row = $this->stmt->fetch()) {
+            $tempId = $useAlias
+                    ? $this->getUniqIdByAlias($row, 't0')
+                    : $this->getUniqIdByTable($row, $this->tableName);
+
+            if ($currentId !== $tempId) {
+                $currentId = $tempId;
+    
+                if ($this->global_data['skip'] !== null && $this->global_data['skip'] > 0) {
                     $this->global_data['skip']--;
                     continue;
-                } 
-
-                if(!empty($data)){
-
+                }
+    
+                if (!empty($data)) {
                     $data = $this->getByMode($data, $this->modelClass, $toArray);
-
-                    if($callback !== null){
+    
+                    if ($callback !== null) {
                         $data = $callback($data);
-                        if($data === false){
+                        if ($data === false) {
                             return $list;
                         }
                     }
-
+    
                     $list[] = $data;
-
                 }
-                
-                $data = $this->getPropsFromRowByTable($row, $this->tableName);
-            }    
+    
+                $data = $useAlias
+                    ? $this->getPropsFromRowByAlias($row, 't0')
+                    : $this->getPropsFromRowByTable($row, $this->tableName);
 
+            }
+    
             foreach ($this->includes as $inc) {
                 $incClass = $inc['model'];
-                $props = $this->getPropsFromRowByTable($row, $inc['table']);
 
-                foreach ($inc['then'] as $thenInc){
+                $props = $useAlias
+                    ? $this->getPropsFromRowByAlias($row, $inc['alias'])
+                    : $this->getPropsFromRowByTable($row, $inc['table']);
+    
+                // ✅ Skip if all fields in the include are null
+                if (count(array_filter($props, fn($v) => $v !== null)) === 0) {
+                    continue;
+                }
+    
+                foreach ($inc['then'] as $thenInc) {
                     $thenClass = $thenInc['model'];
-                    $thenProps = $this->getPropsFromRowByTable($row, $thenInc['table']);
-
-                    if($thenInc['isMany']){
+                    $thenProps = $useAlias
+                        ? $this->getPropsFromRowByAlias($row, $thenInc['alias'])
+                        : $this->getPropsFromRowByTable($row, $thenInc['table']);
+    
+                    // ✅ Skip if all fields in the then-include are null
+                    if (count(array_filter($thenProps, fn($v) => $v !== null)) === 0) {
+                        continue;
+                    }
+    
+                    if ($thenInc['isMany']) {
                         $props[$thenInc['field']][] = $this->getByMode($thenProps, $thenClass, $toArray);
-                    } else if (!isset($props[$thenInc['field']])){
+                    } else if (!isset($props[$thenInc['field']])) {
                         $props[$thenInc['field']] = $this->getByMode($thenProps, $thenClass, $toArray);
                     }
                 }
-
-                if($inc['isMany']){
+    
+                if ($inc['isMany']) {
                     $data[$inc['field']][] = $this->getByMode($props, $incClass, $toArray);
-                } else if (!isset($data[$inc['field']])){
+                } else if (!isset($data[$inc['field']])) {
                     $data[$inc['field']] = $this->getByMode($props, $incClass, $toArray);
                 }
             }
         }
-
-        if($this->global_data['skip'] !== null && $this->global_data['skip'] > 0){
+    
+        if ($this->global_data['skip'] !== null && $this->global_data['skip'] > 0) {
             $this->global_data['skip']--;
             return $list;
         }
-
-        if(!empty($data)){
-
+    
+        if (!empty($data)) {
             $data = $this->getByMode($data, $this->modelClass, $toArray);
-            if($callback !== null){
+            if ($callback !== null) {
                 $data = $callback($data);
-                if($data === false){
+                if ($data === false) {
                     return $list;
                 }
             }
             $list[] = $data;
         }
-
+    
         $this->Reset();
         return $list;
     }
+    
+
+    public function Update(object|array $data, callable $func = null): void {
+        if (!isset($this->tableName) || empty($this->tableName))
+            $this->context->Error("Table name not set in class: ", get_class($this) . " in Update");
 
 
-    function Add(object|array $data)
+        if (!$this->context->IsSavingChanges()) {
+            $this->context->Tracker()->Enqueue($this, 'update', $data, $func);
+            return;
+        }
+
+        $data = $this->_normalizeData($data);
+
+        $whereClauses = [];
+        $params = [];
+        $t_data = [];
+        foreach ($data as $key => $value) {
+            if (in_array($key,  $this->tableInfo['primaryKeys'])) {
+                $whereClauses[] = "`$key` = :pk_$key";
+                $params[":pk_$key"] = $value;
+            }else{
+                $t_data[$key] = $value;
+            }
+        }
+        $data = $t_data;
+
+        $resUpdate = Sql::Update($this->tableName, $data);
+        $query = $resUpdate['query'];
+
+        if($func !== null){
+            $res = Sql::Where($func);
+            $query .= ' ' . $res['query'];
+            $query .= ";";
+            $params = array_merge($resUpdate['params'], $res['params']);
+        }else{
+            if (empty($whereClauses)) {
+                throw new \Exception("Update failed: No primary key(s) provided.");
+            }
+            $query .= " WHERE " . implode(' AND ', $whereClauses);
+            $query .= ";";
+            $params = array_merge($params, $resUpdate['params']);
+        }
+
+        $this->Execute($query, ...$params);
+    }
+    public function Add(object|array $data): object
     {
         if (!isset($this->tableName) || empty($this->tableName))
             $this->context->Error("Table name not set in class: ", get_class($this) . " in Add");
 
-        if (is_object($data)) {
-            $new_data = [];
-            foreach ($this->tableInfo['fields'] as $field => $type) {
-                //check if have geter method then use it
-                $getter = "_Get" . ucfirst($field);
-                if (method_exists($data, $getter)) {
-                    $new_data[$field] = $data->$getter();
-                    continue;
-                }
-                if (!isset($data->{$field}))
-                    continue;
+        $entity = $this->ensureEntity($data);
 
-                $new_data[$field] = $data->{$field};
-            }
-            $data = $new_data;
+        if (!$this->context->IsSavingChanges()) {
+            $this->context->Tracker()->Enqueue($this, 'add', $entity);
+            return $entity;
         }
-        $res = Sql::Insert($this->tableName, $data);
 
+        $values = $this->_normalizeData($entity);
+        $res = Sql::Insert($this->tableName, $values);
         $this->Execute($res['query'], ...$res['params']);
+
+        $pk = $this->tableInfo['primaryKeys'][0] ?? null;
+        if ($pk && property_exists($entity, $pk) && empty($entity->$pk)) {
+            $entity->$pk = $this->connection->lastInsertId();
+        }
+
+        return $entity;
     }
-    function Remove(callable|object $objOrfunc)
+    public function Remove(callable|array|object $objOrfunc)
     {
         if (!isset($this->tableName) || empty($this->tableName))
             $this->context->Error("Table name not set in class: ", get_class($this) . " in Remove");
 
+        if (!$this->context->IsSavingChanges()) {
+
+            if (is_callable($objOrfunc)) {
+                $this->context->Tracker()->Enqueue($this, 'remove', null, $objOrfunc);
+            }
+            else if (is_array($objOrfunc) || is_object($objOrfunc)){
+                $this->context->Tracker()->Enqueue($this, 'remove', $objOrfunc);
+            }
+
+            return;
+        }
+
         if (is_callable($objOrfunc)) {
             $this->_removeQuery($objOrfunc);
         }
-        else if (is_object($objOrfunc)){
-            $this->_removeObject($objOrfunc);
+        else if (is_array($objOrfunc) || is_object($objOrfunc)){
+            $this->_removeObjectOrArray($objOrfunc);
         }
     }
-    function Clear() : void {
+    public function Clear() : void {
         if($this->context->IsSqlite())
             $query = "DELETE FROM {$this->tableName};";
         else
@@ -210,21 +323,21 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
     }
 
 
-    function Skip(int $length): self
+    public function Skip(int $length): self
     {
         $this->global_data['skip'] = $length;
         return $this;
     }
-    function Take(int $length): self
+    public function Take(int $length): self
     {   
         $this->_limit($length + ($this->global_data['skip'] ?? 0));
         return $this;
     }
-    function Any(callable $func = null): bool
+    public function Any(callable $func = null): bool
     {
         return $this->Count($func) > 0;
     }
-    function Count(callable $func = null): int
+    public function Count(callable $func = null): int
     {
         if($func !== null)
             $this->Where($func);
@@ -238,14 +351,14 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
         $this->Reset();
         return $count;
     }
-    function Map(callable $callback): ICollection {
+    public function Map(callable $callback): ICollection {
         list($query, $params) = $this->_prepareExecute();
         $this->Execute($query, ...$params);
 
         $list = $this->FetchAll(callback: $callback);
         return new ReadOnlyCollection($list);
     }
-    function ForEach(callable $callback) : void
+    public function ForEach(callable $callback) : void
     {
         list($query, $params) = $this->_prepareExecute();
         $this->Execute($query, ...$params);
@@ -254,7 +367,7 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
     }
 
 
-    function FirstOrDefault(callable $func = null): mixed
+    public function FirstOrDefault(callable $func = null): mixed
     {
         if($func !== null)
             $this->Where($func);
@@ -264,7 +377,7 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
 
         return $this->Fetch();
     }
-    function SingleOrDefault(callable $func = null): mixed
+    public function SingleOrDefault(callable $func = null): mixed
     {
         if($func !== null)
             $this->Where($func);
@@ -287,7 +400,7 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
 
         return $res[0];
     }
-    function Where(callable $func): self
+    public function Where(callable $func): self
     {
         $res = $this->_where($func);
 
@@ -299,101 +412,83 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
         $this->global_data['params'] = array_merge($this->global_data['params'], $res['params']);
         return $this;
     }
-    function OrderBy(callable $func): self
+    public function OrderBy(callable $func): self
     {
         $this->_orderBy($func,'ASC');
         return $this;
     }
-    function OrderByDescending(callable $func): self
+    public function OrderByDescending(callable $func): self
     {
         $this->_orderBy($func,'DESC');
         return $this;
     }
 
 
-    function Include(callable $func) : self {
-        $this->global_data['loaded'][$this->tableName] = true;
-
+    public function Include(callable $func): self
+    {
         $field = $this->_parseField($func);
+        $modelMeta = $this->getModelMetadata($this->modelClass);
 
-        $ref = new \ReflectionClass($this->modelClass);
-        $prop = $ref->getProperty($field);
-        $attr = $prop->getAttributes(\DafDb\Attributes\DbInclude::class)[0];
-        $attr_args = $attr->getArguments();
-
-        $table = $attr_args['Table'];
-
-        $condition = $attr_args['Condition'];
-        $propTypeName = $prop->getType()->getName();
-
-        $isMany = false;
-        if($propTypeName === 'array'){
-            $isMany = true;
-            $propModel = $attr_args['Model'];
-            if($propModel === null){
-                throw new \Exception("Model not set in DbInclude attribute");
-            }
-            $propTypeName = $propModel;
+        if (!isset($modelMeta['includes'][$field])) {
+            throw new \Exception("DbInclude metadata not found for {$this->modelClass}::{$field}");
         }
 
-        $columns = [];
-        if($this->context->IsSqlite()){
-            $columns_query = "PRAGMA table_info($table)";
-            $this->Execute($columns_query);
-            $columns = $this->stmt->fetchAll(\PDO::FETCH_COLUMN, 1);
-        }else{
-            $columns_query = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = :database AND TABLE_NAME = :table";
-            $this->Execute($columns_query, ...array(':database' => $this->context->database,':table' => $table));
-            $columns = $this->stmt->fetchAll(\PDO::FETCH_COLUMN, 0);
-        }
-        
-        $select = implode(", ", array_map(fn($c) => "$table.$c AS `$table.$c`", $columns));
-        $this->includes[] = ['then'=>[], 'model' => $propTypeName, 'isMany' => $isMany, 'field' => $field, 'select' => $select ,'table' => $table, 'condition' => $condition];
-        
+        $meta = $modelMeta['includes'][$field];
+        $columns = $this->getModelMetadata($meta['model'])['columns'];
+
+        $alias = $this->nextIncludeAlias();
+        $select = $this->buildSelectFromColumns($columns, $alias);
+
+        $condition = $this->aliasCondition($meta['condition'], $meta['table'], $alias, $this->tableName, 't0');
+
+        $this->includes[] = [
+            'alias' => $alias,
+            'table' => $meta['table'],
+            'field' => $field,
+            'model' => $meta['model'],
+            'isMany' => $meta['isMany'],
+            'select' => $select,
+            'condition' => $condition,
+            'then' => [],
+        ];
+
         return $this;
     }
-    function ThenInclude(callable $func) : self {
+    public function ThenInclude(callable $func): self
+    {
+        if (empty($this->includes)) {
+            throw new \Exception("ThenInclude called before Include");
+        }
+
         $field = $this->_parseField($func);
-        $last_include = &$this->includes[count($this->includes) - 1];
-        
-        $ref = new \ReflectionClass($last_include['model']);
-        $prop = $ref->getProperty($field);
-        $attr = $prop->getAttributes(\DafDb\Attributes\DbInclude::class)[0];
-        $attr_args = $attr->getArguments();
+        $parent = &$this->includes[count($this->includes) - 1];
+        $parentMeta = $this->getModelMetadata($parent['model']);
 
-        $table = $attr_args['Table'];
-        $condition = $attr_args['Condition'];
-        $propTypeName = $prop->getType()->getName();
-
-        $isMany = false;
-        if($propTypeName === 'array'){
-            $isMany = true;
-            $propModel = $attr_args['Model'];
-            if($propModel === null){
-                throw new \Exception("Model not set in DbInclude attribute");
-            }
-            $propTypeName = $propModel;
+        if (!isset($parentMeta['includes'][$field])) {
+            throw new \Exception("DbInclude metadata not found for {$parent['model']}::{$field}");
         }
 
+        $meta = $parentMeta['includes'][$field];
+        $columns = $this->getModelMetadata($meta['model'])['columns'];
 
-        $columns = [];
-        if($this->context->IsSqlite()){
-            $columns_query = "PRAGMA table_info($table)";
-            $this->Execute($columns_query);
-            $columns = $this->stmt->fetchAll(\PDO::FETCH_COLUMN, 1);
-        }else{
-            $columns_query = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = $table";
-            $this->Execute($columns_query, ...array(':table' => $table));
-            $columns = $this->stmt->fetchAll(\PDO::FETCH_COLUMN, 0);
-        }
+        $alias = $this->nextIncludeAlias();
+        $select = $this->buildSelectFromColumns($columns, $alias);
 
-        $select = implode(", ", array_map(fn($c) => "$table.$c AS `$table.$c`", $columns));
+        $condition = $this->aliasCondition($meta['condition'], $meta['table'], $alias, $parent['table'], $parent['alias']);
 
-        $last_include['then'][] = ['model' => $propTypeName, 'isMany' => $isMany, 'field' => $field, 'select' => $select ,'table' => $table, 'condition' => $condition];
-        
+        $parent['then'][] = [
+            'alias' => $alias,
+            'table' => $meta['table'],
+            'field' => $field,
+            'model' => $meta['model'],
+            'isMany' => $meta['isMany'],
+            'select' => $select,
+            'condition' => $condition,
+        ];
+
         return $this;
     }
-    function BigTransaction(callable $callback) : void {
+    public function BigTransaction(callable $callback) : void {
         try {
             $this->connection->beginTransaction();
 
@@ -405,9 +500,9 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
             throw $e;
         }
     }
-    
 
-    function ToArray(): array
+
+    public function ToArray(): array
     {
         if(!isset($this->tableName) || empty($this->tableName))
             $this->context->Error("Table name not set in class: ", get_class($this) . " in ToArray");
@@ -416,11 +511,11 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
         $this->Execute($query, ...$params);
         return $this->FetchAll();
     }
-    function RowToArray() : self{
-        $this->rowToArray = true;
+    public function RowToArray(bool $value = true) : self{
+        $this->rowToArray = $value;
         return $this;
     }
-    function ToCollection(): ICollection
+    public function ToCollection(): ICollection
     {
         if(!isset($this->tableName) || empty($this->tableName))
             $this->context->Error("Table name not set in class: ", get_class($this) . " in ToCollection");
@@ -430,128 +525,190 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
 
         return new ReadOnlyCollection($this->FetchAll());
     }
-    function QueryBuilder(): SqlQueriesBuilder
+    public function QueryBuilder(): SqlQueriesBuilder
     {
         if (!isset($this->tableName) || empty($this->tableName))
             $this->context->Error("Table name not set in class: ", get_class($this) . " in QueryBuilder");
 
-        $qb = new SqlQueriesBuilder($this->tableName);
+        $qb = new SqlQueriesBuilder($this);
         return $qb;
     }
     
-    
-    
-    protected function CreateTable() {
- 
-        $query = "CREATE TABLE IF NOT EXISTS {$this->tableName} (";
-        $fields = $this->tableInfo['fields'];
-  
-        if(count($this->tableInfo['primaryKeys']) > 1){
-           foreach ($this->tableInfo['primaryKeys'] as $key) {
-              $fields["`$key`"] = str_replace(' PRIMARY KEY', '', $fields[$key]);
-           }
-        }
-  
-        foreach ($fields as $field => $type) {
-           $query .= "`$field` $type,";
-        }
-        $query = rtrim($query, ",");
-  
-        if(count($this->tableInfo['primaryKeys']) > 1){
-           $pks = implode(",", array_map(fn($pk)=>"`$pk`", $this->tableInfo['primaryKeys']));
-           $query .= ", PRIMARY KEY ($pks)";
-        }
-        
-        if(count($this->tableInfo['foreignKeys']) > 0){
-           $fks = implode(",", $this->tableInfo['foreignKeys']);
-           $query .= ", $fks";
-        }
-  
-        $query .= ");";
-         
-         $this->Execute($query);
-     }
-    protected function LoadTableInfoFromClass($class)
+
+    public function GetMetadata() { return $this->getModelMetadata($this->modelClass); }
+    public function EnsureTableCreated(): void
     {
-       $isSqlite = $this->context->IsSqlite();
-       //reflection for get array of properties as prop name as key prop value as value
-       try {
-          $reflection = new \ReflectionClass($class);
-       } catch (\Throwable $th) {
-          echo $th->getMessage();
-       }
- 
-       $props = $reflection->getProperties(\ReflectionProperty::IS_PUBLIC);
-       
-       foreach ($props as $prop) {
-          $field_name = $prop->getName();
-          $type = $prop->getType();
-          $field_type = $type->getName();
-          $field_type = match ($field_type) {
-             'int' => 'INTEGER',
-             'string' => 'TEXT',
-             'float' => 'FLOAT',
-             'bool' => 'BOOLEAN',
-             default => null,
-          };
- 
-          if (!$field_type)
-             continue;
- 
-          // check the prop type is nullable
-          $isNullable = $type && $type->allowsNull();
-          if (!$isNullable) {
-             $field_type .= ' NOT NULL';
-          }
- 
-          $known_attributes = [
-             Attributes\PrimaryKey::class,
-             Attributes\ForeignKey::class,
-             Attributes\Unique::class,
-             Attributes\AutoIncrement::class,
-             Attributes\DbIgnore::class,
-          ];
- 
-          //get prop attributes
-          $attributes = $prop->getAttributes();
-          foreach ($attributes as $attr) {
-             $attrName = $attr->getName();
- 
-             if (!in_array($attrName, $known_attributes))
-                continue;
- 
-             if ($attrName === Attributes\DbIgnore::class){
-                continue 2;
-             }
-             else if ($attrName === Attributes\PrimaryKey::class) {
-                $field_type .= ' PRIMARY KEY';
-                $this->tableInfo['primaryKeys'][] = $field_name;
-             } 
-             else if ($attrName === Attributes\ForeignKey::class) {
-                $attrArgs = $attr->getArguments();
-                $onDelete = '';
-                if(isset($attrArgs['OnDelete'])){
-                   $onDelete = 'ON DELETE ' . $attrArgs['OnDelete'];
-                }
-                $this->tableInfo['foreignKeys'][$field_name] = " FOREIGN KEY (`$field_name`) REFERENCES `{$attrArgs['Table']}`(`{$attrArgs['Column']}`) $onDelete";
-             } 
-             else if ($attrName === Attributes\AutoIncrement::class) {
-                if ($isSqlite)
-                   $field_type .= ' AUTOINCREMENT';
-                else
-                   $field_type .= ' AUTO_INCREMENT';
-             } else if ($attrName === Attributes\Unique::class) {
-                $field_type .= ' UNIQUE';
-             }
-          }
- 
-          $this->tableInfo['fields'][$field_name] = $field_type;
-       }
+        $mapper = new \DafDb\Migrations\Mapper\AttributeToBuilderMapper();
+        $t = $mapper->BuildTable($this->tableName, $this->modelClass);
+
+        $provider = $this->context->GetSqlProvider();
+        foreach ($provider->CompileCreateTable($t) as $sql) {
+            $this->context->Execute($sql);
+        }
     }
 
 
+    // allow Context to clear or set tableInfo without reflection
+    protected function ClearTableInfo(): void
+    {
+        $this->tableInfo = [
+            'columns' => [],
+            'primaryKeys' => [],
+            'foreignKeys' => [],
+            'includes' => []
+        ];
+    }
+    protected function SetTableInfo(array $columns, array $primaryKeys = [], array $foreignKeys = [], array $includes = []): void
+    {
+        $this->tableInfo = [
+            'columns' => $columns,
+            'primaryKeys' => $primaryKeys,
+            'foreignKeys' => $foreignKeys,
+            'includes' => $includes
+        ];
+    }
 
-    private function getUniqId(array $row, string $table, string $modelClass)
+    protected function LoadTableInfoFromClass($class)
+    {
+        $this->tableInfo = $this->getModelMetadata($class);
+    }
+    private function getModelMetadata(string $modelClass): array
+    {
+        if (isset(self::$modelMetadataCache[$modelClass])) {
+            return self::$modelMetadataCache[$modelClass];
+        }
+        if (isset(self::$modelMetadataInProgress[$modelClass])) {
+            // prevent circular recursion (User -> UserRole -> User)
+            return ['columns' => [], 'includes' => []];
+        }
+        self::$modelMetadataInProgress[$modelClass] = true;
+
+        $meta = [
+            'columns' => [],
+            'columnTypes' => [],
+            'primaryKeys' => [],
+            'foreignKeys' => [],
+            'includes' => [],
+        ];
+
+        $known_attributes = [
+            Attributes\PrimaryKey::class,
+            Attributes\ForeignKey::class,
+            Attributes\Unique::class,
+            Attributes\AutoIncrement::class,
+            Attributes\DbIgnore::class,
+            Attributes\DbInclude::class
+        ];
+
+        $ref = new \ReflectionClass($modelClass);
+        foreach ($ref->getProperties(\ReflectionProperty::IS_PUBLIC) as $prop) {
+            /** @var \ReflectionProperty $prop */
+            $name = $prop->getName();
+
+            $type = $prop->getType();
+            $typeName = $type instanceof \ReflectionNamedType ? $type->getName() : null;
+            $isBuiltIn = $type instanceof \ReflectionNamedType && $type->isBuiltin();
+            $isDate = $typeName && is_a($typeName, \DafGlobals\Dates\IDate::class, true);
+
+            $attributes = $prop->getAttributes();
+            foreach ($attributes as $attr) {
+                $attrName = $attr->getName();
+
+                if (!in_array($attrName, $known_attributes)) continue;
+
+                if ($attrName === Attributes\DbIgnore::class) {
+                    continue 2;
+                } 
+
+                if ($attrName === Attributes\PrimaryKey::class) {
+                    $meta['primaryKeys'][] = $name;
+                } 
+
+                if ($attrName === Attributes\ForeignKey::class) {
+                    $attrInstane = $attr->newInstance();
+                    $fk_tableName = $attrInstane->Value->Table;
+                    $fk_tableColumn = $attrInstane->Value->Column;
+
+                    $onDelete = '';
+                    if (isset($attrInstane->Value->OnDelete)) {
+                        $onDelete = 'ON DELETE ' . $attrInstane->Value->OnDelete;
+                    }
+
+                    $meta['foreignKeys'][$name] =
+                        " FOREIGN KEY (`$name`) REFERENCES `{$fk_tableName}`(`{$fk_tableColumn}`) $onDelete";
+                } 
+
+                if ($attrName === Attributes\DbInclude::class) {
+                    $attrInstane = $attr->newInstance();
+                    $table = $attrInstane->Table;
+                    $condition = $attrInstane->Condition;
+                    
+                    if (!$table || !$condition || !$type instanceof \ReflectionNamedType) {
+                        continue 2;
+                    }
+
+                    $propType = $type->getName();
+                    $isMany = in_array($propType, [
+                        'array',
+                        \DafGlobals\Collections\ICollection::class,
+                        \DafGlobals\Collections\Collection::class,
+                    ], true);
+
+                    $targetModel = $propType;
+                    if ($isMany) {
+                        $targetModel = $attrInstane->Model;
+                        if ($targetModel === null) {
+                            throw new \Exception("DbInclude on {$modelClass}::{$name} requires model argument");
+                        }
+                    }
+
+                    $meta['includes'][$name] = [
+                        'table' => $table,
+                        'condition' => $condition,
+                        'model' => $targetModel,
+                        'isMany' => $isMany,
+                    ];
+
+                    // recurse so nested includes are cached too
+                    $this->getModelMetadata($targetModel);
+                    continue 2;
+                } 
+            }
+
+            // scalar column
+            if ($isBuiltIn || $isDate) {
+                $meta['columns'][] = $name;
+                $meta['columnTypes'][$name] = $typeName;
+            }
+        }
+
+        self::$modelMetadataCache[$modelClass] = $meta;
+        unset(self::$modelMetadataInProgress[$modelClass]);
+        return $meta;
+    }
+
+    private function getIncludeProps(): array
+    {
+        $rootAlias = 't0';
+
+        $columns = $this->getModelMetadata($this->modelClass)['columns'];
+        $select = $this->buildSelectFromColumns($columns, $rootAlias);
+
+        $join = '';
+        $order = $this->buildOrderByPrimaryKey($rootAlias);
+
+        foreach ($this->includes as $include) {
+            $select .= ',' . $include['select'];
+            $join .= " LEFT JOIN {$include['table']} {$include['alias']} ON {$include['condition']}";
+            foreach ($include['then'] as $then) {
+                $select .= ',' . $then['select'];
+                $join .= " LEFT JOIN {$then['table']} {$then['alias']} ON {$then['condition']}";
+            }
+        }
+
+        return ['select' => $select, 'join' => $join, 'order' => $order];
+    }
+    private function getUniqIdByTable(array $row, string $table)
     {
         $id = "";
         $primaryKeys = $this->tableInfo['primaryKeys'];
@@ -561,20 +718,17 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
             else if(isset($row[$primaryKey]))
                 $id .= $row[$primaryKey] . ',';
         }
+        
         return rtrim($id, ',');
     }
-    private function getPropsFromRowByTable(array $row, string $table): array
+    private function getUniqIdByAlias(array $row, string $alias): string
     {
-        $props = [];
-        foreach($row as $key => $value){
-            if(str_starts_with($key, $table. '.')){
-                $newKey = str_replace($table . '.', '', $key);
-                $props[$newKey] = $value;
-            } else if (!str_contains($key, '.')){
-                $props[$key] = $value;
-            }
+        $id = '';
+        foreach ($this->tableInfo['primaryKeys'] as $pk) {
+            $key = "{$alias}.{$pk}";
+            if (isset($row[$key])) $id .= $row[$key] . ',';
         }
-        return $props;
+        return rtrim($id, ',');
     }
     private function getByMode(array $data, string $class, bool $toArray){
         if($toArray){
@@ -583,56 +737,137 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
             return new $class($data);
         }
     }
-    private function getIncludeProps() : array {
-        if (!isset($this->tableName) || empty($this->tableName))
-            $this->context->Error("Table name not set in class: ", get_class($this) . " in OrderBy");
-        
-        $columns = [];
-        if($this->context->IsSqlite()){
-            $columns_query = "PRAGMA table_info({$this->tableName})";
-            $this->Execute($columns_query);
-            $columns = $this->stmt->fetchAll(\PDO::FETCH_COLUMN, 1);
-        }else{
-            $columns_query = "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = :database AND TABLE_NAME = :table";
-            $this->Execute($columns_query, ...array(':database' => $this->context->database, ':table' => $this->tableName));
-            $columns = $this->stmt->fetchAll(\PDO::FETCH_COLUMN, 0);
-        }
-        
-        $select = implode(", ", array_map(fn($c) => "{$this->tableName}.$c AS `{$this->tableName}.$c`", $columns));
-        $query = $select;
-        $join = '';
-        
-        $loaded = [$this->tableName => true];
-        foreach ($this->includes as $include) {
-            if(isset($loaded[$include['table']])) continue;
-            $loaded[$include['table']] = true;
 
-            $query .= ',' . $include['select'];
-            $join .= ' JOIN ' . $include['table'] . ' ON ' . $include['condition'];
-            if(!empty($include['then'])){
-                foreach ($include['then'] as $thenInclude) {
-                    if(isset($loaded[$thenInclude['table']])) continue;
-                    $loaded[$thenInclude['table']] = true;
-    
-                    $query .= ',' . $thenInclude['select'];
-                    $join .= ' JOIN ' . $thenInclude['table'] . ' ON ' . $thenInclude['condition'];
-                }
+    private function hydrateValue(string $field, mixed $value): mixed
+    {
+        if ($value === null) return null;
+
+        $type = $this->tableInfo['columnTypes'][$field] ?? null;
+        if ($type && is_a($type, \DafGlobals\Dates\IDate::class, true)) {
+            return $type::FromString((string)$value);
+        }
+        return $value;
+    }
+    private function getPropsFromRowByTable(array $row, string $table): array
+    {
+        $props = [];
+        foreach ($row as $key => $value) {
+            if (str_starts_with($key, $table . '.')) {
+                $field = substr($key, strlen($table) + 1);
+                $props[$field] = $this->hydrateValue($field, $value);
+            } elseif (!str_contains($key, '.')) {
+                $props[$key] = $this->hydrateValue($key, $value);
             }
         }
-        return ['select'=>$query, 'join'=>$join];
+        return $props;
+    }
+    private function getPropsFromRowByAlias(array $row, string $alias): array
+    {
+        $props = [];
+        $prefix = $alias . '.';
+        $len = strlen($prefix);
+
+        foreach ($row as $key => $value) {
+            if (strncmp($key, $prefix, $len) === 0) {
+                $field = substr($key, $len);
+                $props[$field] = $this->hydrateValue($field, $value);
+            }
+        }
+        return $props;
     }
 
 
-    private function _removeObject(object $obj)
+    private function buildSelectFromColumns(array $columns, string $alias): string
     {
-        $query = "DELETE FROM {$this->tableName} WHERE ";
-        $primaryKeys = $this->tableInfo['primaryKeys'];
-        $params = [];
-        foreach ($primaryKeys as $field) {
-            $query .= "`$field` = :$field AND ";
-            $params[":$field"] = $obj->$field;
+        if (empty($columns)) return "{$alias}.*";
+        return implode(', ', array_map(fn($c) => "{$alias}.{$c} AS `{$alias}.{$c}`", $columns));
+    }
+    private function aliasCondition(string $condition, string $table, string $alias, ?string $parentTable = null, ?string $parentAlias = null): string {
+        $condition = preg_replace('/\b' . preg_quote($table, '/') . '\b/', $alias, $condition);
+        $condition = preg_replace('/\b' . preg_quote($this->tableName, '/') . '\b/', 't0', $condition);
+
+        if ($parentTable && $parentAlias) {
+            $condition = preg_replace('/\b' . preg_quote($parentTable, '/') . '\b/', $parentAlias, $condition);
         }
-        $query = rtrim($query, "AND ");
+
+        return $condition;
+    }
+    private function nextIncludeAlias(): string
+    {
+        return 't' . (++$this->includeAliasCounter);
+    }
+    private function buildOrderByPrimaryKey(string $alias): string
+    {
+        $pks = $this->tableInfo['primaryKeys'] ?? [];
+        if (empty($pks)) return '';
+        $parts = array_map(fn($pk) => "{$alias}.{$pk}", $pks);
+        return ' ORDER BY ' . implode(', ', $parts);
+    }
+    private function ensureEntity(object|array $data): object
+    {
+        if ($data instanceof $this->modelClass) return $data;
+
+        $class = $this->modelClass;
+        return new $class($data);
+    }
+
+
+    // normalize data for Add,Update functions
+    private function _normalizeData(object|array $data): array
+    {
+        if (is_array($data)) return $data;
+
+        $getValue = function($value){
+            if ($value instanceof IDate) return (string)$value;
+            else return $value;
+        };
+
+        $out = [];
+        foreach ($this->tableInfo['columns'] as $_ => $field) {
+            $getter = "_Get" . ucfirst($field);
+            if (method_exists($data, $getter)) {
+                $out[$field] = $getValue($data->$getter());
+            } elseif (isset($data->$field)) {
+                $out[$field] = $getValue($data->$field);
+            }
+        }
+        return $out;
+    }
+    private function _removeObjectOrArray(object|array $row): void
+    {
+        $primaryKeys = $this->tableInfo['primaryKeys'] ?? [];
+        if (empty($primaryKeys)) {
+            throw new \Exception("Remove failed: No primary keys defined for {$this->tableName}");
+        }
+
+        $where = [];
+        $params = [];
+
+        foreach ($primaryKeys as $field) {
+
+            // Get value from object or array
+            if (is_array($row)) {
+                if (!array_key_exists($field, $row)) {
+                    throw new \Exception("Remove failed: Missing primary key '{$field}' in array for {$this->tableName}");
+                }
+                $value = $row[$field];
+            } else {
+                // Optional: support your getter convention _Get<Field>()
+                $getter = "_Get" . ucfirst($field);
+                if (method_exists($row, $getter)) {
+                    $value = $row->$getter();
+                } elseif (property_exists($row, $field)) {
+                    $value = $row->$field;
+                } else {
+                    throw new \Exception("Remove failed: Missing primary key '{$field}' in object for {$this->tableName}");
+                }
+            }
+
+            $where[] = "`{$field}` = :pk_{$field}";
+            $params[":pk_{$field}"] = $value;
+        }
+
+        $query = "DELETE FROM {$this->tableName} WHERE " . implode(' AND ', $where) . ";";
         $this->Execute($query, ...$params);
     }
     private function _removeQuery(callable $func)
@@ -664,25 +899,53 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
     }
     private function _where(callable $func)
     {
-        if (!isset($this->tableName) || empty($this->tableName))
+        if (!isset($this->tableName) || empty($this->tableName)) {
             $this->context->Error("Table name not set in class: ", get_class($this) . " in Where");
+        }
+    
+        $conditionsSql = Sql::ParseWhere($func);
+        $query = "";
+        $params = [];
+    
+        $useAlias = $this->expectAliasedResult || !empty($this->includes);
 
-       $conditionsSql = Sql::ParseWhere($func);
-       $query = "";
- 
-       $params = [];
-       $column_prefix = !empty(($this->includes)) ? $this->tableName . '.' : '';
+        foreach ($conditionsSql as $condition) {
+            $rawField = substr($condition['field'], 1, -1);
+            $paramKey = $rawField . count($params);
+            $params[":$paramKey"] = $condition['value'];
 
-       foreach($conditionsSql as $condition){
-          $field = substr($condition['field'], 1, -1).count($params);
-          $params[':'.$field] = $condition['value'];
-          $query .= " " . $condition['whereOp'] ." `" . ($column_prefix.substr($condition['field'], 1, -1)) . '` ' . $condition['operator'] . " :$field"; 
-       }
-       //$query = "WHERE " . trim($query);
-       $query = trim($query);
- 
-       return ['query'=>$query, 'params'=>$params];
+            $qualifiedColumn = $useAlias
+                ? "`t0`.`{$rawField}`"
+                : (!empty($this->includes)
+                    ? "`{$this->tableName}`.`{$rawField}`"
+                    : "`{$rawField}`");
+
+            $query .= " " . $condition['whereOp'] . " {$qualifiedColumn} {$condition['operator']} :$paramKey";
+        }
+
+        // foreach ($conditionsSql as $condition) {
+        //     $rawField = substr($condition['field'], 1, -1); // remove backticks
+    
+        //     // Generate unique param name
+        //     $paramKey = $rawField . count($params);
+        //     $params[":$paramKey"] = $condition['value'];
+    
+        //     // Build qualified column (if includes exist, qualify with table name)
+        //     if (!empty($this->includes)) {
+        //         // use `Table`.`Column` format
+        //         $qualifiedColumn = "`{$this->tableName}`.`{$rawField}`";
+        //     } else {
+        //         $qualifiedColumn = "`{$rawField}`";
+        //     }
+    
+        //     $query .= " " . $condition['whereOp'] . " {$qualifiedColumn} {$condition['operator']} :$paramKey";
+        // }
+    
+        $query = trim($query);
+    
+        return ['query' => $query, 'params' => $params];
     }
+    
     private function _parseField(callable $func) : string
     {
        // Create a reflection function from the closure
@@ -719,30 +982,51 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
         $select_prefix = '';
         $select_suffix = '';
 
-        if(!empty($this->global_data['where'])){
+        if (!empty($this->global_data['where'])) {
             $this->global_data['where'] = ' WHERE ' . trim($this->global_data['where']);
         }
 
-        if($this->global_data['count']){
+        if ($this->global_data['count']) {
+            $this->includes = [];
+            $this->global_data['orderBy'] = '';
+
             $select_prefix = 'COUNT(';
             $select_suffix = ')';
             $this->global_data['where'] = str_replace($this->tableName.'.', '', $this->global_data['where']);
             $this->global_data['orderBy'] = str_replace($this->tableName.'.', '', $this->global_data['orderBy']);
         }
-        if(!$this->global_data['count'] && !empty($this->includes)){
-            $res = $this->getIncludeProps();
 
-            $this->global_data['select'] = $res['select'];
-            $this->global_data['join'] = $res['join'];
+        if (!$this->global_data['count']) {
+            $rootMeta = $this->getModelMetadata($this->modelClass);
+            $this->global_data['select'] = $this->buildSelectFromColumns($rootMeta['columns'], 't0');
+            $from = $this->tableName . ' t0';
+            $this->expectAliasedResult = true;
         } else {
-            $this->global_data['select'] = "*";
+            $this->global_data['select'] = '*';
+            $from = $this->tableName;
+            $this->expectAliasedResult = false;
         }
 
-        $query = "SELECT $select_prefix" . $this->global_data['select'] . $select_suffix . " FROM " . $this->tableName . $this->global_data['join'] . $this->global_data['where'] . $this->global_data['orderBy'] . $this->global_data['limit'] .';';
-        //echo $query . "\n";
+        if (!empty($this->includes)) {
+            $res = $this->getIncludeProps();
+            $this->global_data['select'] .= ',' . $res['select'];
+            $this->global_data['join'] = $res['join'];
+            $this->global_data['orderBy'] = $res['order'];
+        } else {
+            $this->global_data['join'] = '';
+        }
+
+        $query = "SELECT $select_prefix" . $this->global_data['select'] . $select_suffix .
+            " FROM " . $from .
+            $this->global_data['join'] .
+            $this->global_data['where'] .
+            $this->global_data['orderBy'] .
+            $this->global_data['limit'] . ';';
+
         $params = $this->global_data['params'];
         return [$query, $params];
     }
+
     function getIterator(): \Traversable
     {
         list($query, $params) = $this->_prepareExecute();
@@ -766,136 +1050,5 @@ abstract class Queryable implements IQueryable, \IteratorAggregate, \JsonSeriali
     {
         if (isset($this->context) && isset($this->connection))
             $this->context->ReleaseConnection($this->connection);
-    }
-}
-
-
-class SqlQueriesBuilder
-{
-    protected array $result = [
-        'query' => '',
-        'params' => []
-    ];
-
-    public function __construct(protected string $tableName) { }
-
-    function Delete(): self
-    {
-        $this->result['query'] = 'DELETE FROM ' . $this->tableName;
-        return $this;
-    }
-    function Select(string | array $columns = '*'): self
-    {
-        if(is_array($columns))
-            $columns = implode(',', $columns);
-
-        $this->result['query'] = 'SELECT ' . $columns . ' FROM ' . $this->tableName;
-        return $this;
-    }
-    function Where(callable $func): self
-    {
-        $res = Sql::Where($func);
-        $this->result['query'] .= ' ' . $res['query'];
-
-        $this->result['params'] = array_merge($this->result['params'], $res['params']);
-
-        return $this;
-    }
-    function Limit(int $limit): self
-    {
-        $this->result['query'] .= ' LIMIT ' . $limit;
-        return $this;
-    }
-    function OrderBy(callable $func): self
-    {
-        $this->_orderBy($func, 'ASC');
-        return $this;
-    }
-    function OrderByDescending(callable $func): self
-    {
-        $this->_orderBy($func, 'DESC');
-        return $this;
-    }
-    function Join(string $table, callable $func) :self{
-        $res = $this->_parseWhere($func);
-        $query = ' JOIN ' . $table . ' ON ' . $this->tableName. '.' .$res['field'] . $res['operator'] . $table . '.' .$res['value'];
-        $this->result['query'] .= $query;
-        
-        return $this;
-    }
-    function Build(): array
-    {
-        if(!isset($this->result['params'])) $this->result['params'] = [];
-        $this->result[0] = $this->result['query'];
-        $this->result[1] = $this->result['params'];
-        return $this->result;
-    }
-
-
-    private function _parseWhere(callable $func) : array
-    {
-       // Create a reflection function from the closure
-       $reflectedFunc = new \ReflectionFunction($func);
- 
-       // Get the closure's code
-       $startLine = $reflectedFunc->getStartLine();
-       $endLine = $reflectedFunc->getEndLine();
-       $length = $endLine - $startLine;
-       $length = $length > 0 ? $length + 1 : 1;
-       
-       $source = array_slice(file($reflectedFunc->getFileName()), $startLine - 1, $length);
-       
-       $markup = implode("", $source);
-       $code = substr($markup, strpos($markup, '=>') + 2);
-       $paramName1 = $reflectedFunc->getParameters()[0]->getName();
-       $paramName2 = $reflectedFunc->getParameters()[1]->getName();
- 
-       $condition = trim($code);
-
-       // Use regex to extract the field, operator, and value
-       preg_match('/\$'.$paramName1.'\->(\w+)\s*(===|==|!=|<>|<=|>=|<|>)\s*\$'.$paramName2.'\->(\w+)/', $condition, $matches);
-
-       $field = $matches[1];
-       $operator = $matches[2] === '===' || $matches[2] === '==' ? '=' : $matches[2]; // Convert '===' to '=' for SQL
-       $value = $matches[3];
- 
-       return ['field'=>$field, 'operator'=>$operator, 'value'=>$value];
-    }
-    private function _parseField(callable $func) : string
-    {
-       // Create a reflection function from the closure
-       $reflectedFunc = new \ReflectionFunction($func);
- 
-       // Get the closure's code
-       $startLine = $reflectedFunc->getStartLine();
-       $endLine = $reflectedFunc->getEndLine();
-       $length = $endLine - $startLine;
-       $length = $length > 0 ? $length + 1 : 1;
-       
-       $source = array_slice(file($reflectedFunc->getFileName()), $startLine - 1, $length);
-       
-       $markup = implode("", $source);
-       $code = substr($markup, strpos($markup, '=>') + 2);
-       $paramName1 = $reflectedFunc->getParameters()[0]->getName();
- 
-       $condition = trim($code);
-
-       // Use regex to extract the field, operator, and value
-       preg_match('/\$'.$paramName1.'\->(\w+)\s*/', $condition, $matches);
-       
-       $field = $matches[1];
- 
-       return $field;
-    }
- 
-    private function _orderBy(callable $func, string $order): self
-    {
-        $column = $this->_parseField($func);
-        $prefix = '';
-        if(isset($this->result['query']) && str_contains($this->result['query'], 'ORDER BY'))
-            $prefix = ',';
-
-        $this->result['query'] .= $prefix.' ORDER BY `' . $column . '` ' . $order;
-        return $this;
     }
 }

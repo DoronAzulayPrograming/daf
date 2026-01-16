@@ -34,8 +34,8 @@ class Auth{
         $valid = $auth_scheme->Authorization(...[...$sp->getServicesForCallback([$auth_scheme, "Authorization"]), $roles]);
 
         if(!$valid) return;
-
-        $next();
+        
+        return $next();
     }
 }
 

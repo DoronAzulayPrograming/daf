@@ -26,6 +26,35 @@ class DafEventObj {
         this.isStopPropagation = true;
     }
 }
+
+
+class DafProgress {
+    constructor(){
+        this.loader = null
+        this.value = 0
+    }
+
+    show = ()=>{
+        const oldLoader = document.getElementById("daf-page-progress")
+        if(oldLoader) oldLoader.remove();
+
+        this.loader = document.createElement("div")
+        this.loader.id = "daf-page-progress"
+        this.loader.className = "position-absolute bottom-0 right-0 w-25"
+        this.loader.innerHTML = `
+        <div class="progress rounded-end-0" role="progressbar" aria-label="Animated striped loader" aria-valuenow="75" aria-valuemin="0" aria-valuemax="100">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
+        </div>
+        `
+
+        document.body.appendChild(this.loader)
+    }
+
+    hide(){
+        this.loader.remove()
+    }
+}
+
 class Daf {
     constructor(){
         this.events = {
@@ -94,14 +123,20 @@ class Daf {
     // Function to fetch the content of a page
     #fetchContent(url) {
         if (new URL(url).origin === window.location.origin) {
+            const progress = new DafProgress()
+            progress.show()
             fetch(url, { method: 'GET' })
                 .then(response => response.text())
                 .then(this.#updatePage)
-                .catch(error => console.error('Error loading the page: ', error));
+                .catch(error => console.error('Error loading the page: ', error))
+                .finally(()=> progress.hide());
         } else {
             // If it's not the same domain, let the default action proceed
             window.location.href = url;
         }
+    }
+    renderHtml = (html)=>{
+        this.#updatePage(html)
     }
     #updatePage = (html)=>{
         const parser = new DOMParser();
@@ -139,8 +174,9 @@ class Daf {
             if(e.Daf.isPreventDefault === true) return
             if(e.Daf.isStopPropagation === true) e.stopPropagation()
         }
-
-        const url = e.target.href
+        
+        e.preventDefault()
+        const url = e.currentTarget.href
         if(!URL.canParse(url)) return
         
         e.preventDefault()
@@ -150,7 +186,7 @@ class Daf {
 
     // Function to initialize the from tags for fetch requests
     #initFromTags() {
-        document.querySelectorAll("form").forEach(f=>{
+        document.querySelectorAll("form:not([data-daf-ignore])").forEach(f=>{
             f.removeEventListener('submit', this.#onFromSubmit)
             f.addEventListener('submit', this.#onFromSubmit)
         })

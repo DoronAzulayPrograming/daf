@@ -1,5 +1,5 @@
 <?php
-/** @var DafCore\Component $this  */
+/** @var DafCore\IComponent $this  */
 /** @var DafCore\ScriptsOutlet $outlet  */
 $outlet = $this->Inject(DafCore\ScriptsOutlet::class);
 ?>

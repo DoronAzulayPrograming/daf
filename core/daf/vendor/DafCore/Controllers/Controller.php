@@ -23,35 +23,35 @@ class Controller extends BaseController {
         return $this->viewManager->SetLayout($this->layout)->RenderView($view, $params);
     }
     
-    protected function InternalError($msg = null, $view = "_500"){
-        if(file_exists("App/Views/_Errors/$view.php")){
+    protected function InternalError($msg = null, $view = "_ErrorPage"){
+        if(file_exists("App/Views/$view.php")){
             $this->response->Status(400);
-            return $this->viewManager->SetLayout('none')->RenderView($view, ["Msg"=>$msg]);
+            return $this->viewManager->SetLayout('none')->RenderView($view, ["Status"=> 500,"Msg"=>$msg]);
         }
 
         return $this->response->InternalError($msg);
     }
              
-    protected function BadRequset($msg = null, $view = "_400"){
-        if(file_exists("App/Views/_Errors/$view.php")){
+    protected function BadRequset($msg = null, $view = "_ErrorPage"){
+        if(file_exists("App/Views/$view.php")){
             $this->response->Status(400);
-            return $this->viewManager->SetLayout('none')->RenderView($view, ["Msg"=>$msg]);
+            return $this->viewManager->SetLayout('none')->RenderView($view, ["Status"=> 400,"Msg"=>$msg]);
         }
 
         return $this->response->BadRequest($msg);
     }
 
-    protected function NotFound($msg = null, $view = "_404"){
-        if(file_exists("App/Views/_Errors/$view.php")){
+    protected function NotFound($msg = null, $view = "_ErrorPage"){
+        if(file_exists("App/Views/$view.php")){
             $this->response->Status(404);
-            return $this->viewManager->SetLayout('none')->RenderView($view, ["Msg"=>$msg]);
+            return $this->viewManager->SetLayout('none')->RenderView($view, ["Status"=> 404,"Msg"=>$msg]);
         }
 
         return $this->response->NotFound($msg);
     }
 
     protected function Redirect($location = ""){
-        header('Location: /' . $location);
+        header('Location: ' . $location);
         exit();
     }
     
