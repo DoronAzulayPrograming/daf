@@ -1,8 +1,0 @@
-{
-  "Name": "ApiExample",
-  "Dependencies": {
-    "DafCore": "^",
-    "DafDb": "^",
-    "DafGlobals": "^"
-  }
-}
