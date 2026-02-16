@@ -1,1 +1,0 @@
-<?= $this->_->Parent->RenderChildContent(); ?>

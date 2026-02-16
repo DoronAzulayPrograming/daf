@@ -1,0 +1,32 @@
+<?php
+/**
+ * @daf-summary Renders an anchor and applies the <code>active</code> class when its href matches the current route.
+ *
+ * @daf-param Match bool optional default=true - exact href match against the current path
+ * @daf-param StartWith bool optional default=false - prefix match against the current path
+ */
+/** 
+ * @var DafCore\IComponent $this 
+ * @var DafCore\Request $req 
+ * @var bool $match 
+ * */
+
+$req = $this->Inject(DafCore\Request::class);
+$match = $this->Parameter('Match', 'bool') ?? true;
+$startWith = $this->Parameter('StartWith', 'bool') ?? false;
+
+if($match){
+    if($this->GetAttribute('href') === $req->GetUrlPath()){
+        $this->AddAttributesToEnd(['class' => 'active']);
+    }
+}
+if($startWith){
+    $href = $this->GetAttribute('href');
+    if($href !== null && str_starts_with($req->GetUrlPath(), $href)){
+        $this->AddAttributesToEnd(['class' => 'active']);
+    }
+}
+?>
+
+
+<a <?=$this->RenderAttributes()?>><?=$this->RenderChildContent() ?></a>
