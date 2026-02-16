@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "dgSpecHash": "xJboVNBe9Vo2PzKnGik+tO/8gMA7iGVOUpmbCA83OJBkoY2wgrACItwvBcQWxxkv9HmL6NQBTT2Wdi9pfhFOkg==",
+  "success": true,
+  "projectFilePath": "/Users/doronazulay/dev/dotnet/Daf/Daf/Daf.csproj",
+  "expectedPackageFiles": [
+    "/Users/doronazulay/.nuget/packages/fleck/1.2.0/fleck.1.2.0.nupkg.sha512",
+    "/Users/doronazulay/.nuget/packages/microsoft.net.illink.tasks/8.0.3/microsoft.net.illink.tasks.8.0.3.nupkg.sha512",
+    "/Users/doronazulay/.nuget/packages/microsoft.netcore.app.runtime.win-x64/8.0.3/microsoft.netcore.app.runtime.win-x64.8.0.3.nupkg.sha512",
+    "/Users/doronazulay/.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/8.0.3/microsoft.aspnetcore.app.runtime.win-x64.8.0.3.nupkg.sha512",
+    "/Users/doronazulay/.nuget/packages/microsoft.netcore.app.host.win-x64/8.0.3/microsoft.netcore.app.host.win-x64.8.0.3.nupkg.sha512"
+  ],
+  "logs": []
+}

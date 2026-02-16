@@ -1,0 +1,2 @@
+/Users/doronazulay/dev/dotnet/Daf/Daf/bin/Release/net8.0/osx-arm64/publish/Daf.pdb
+/Users/doronazulay/dev/dotnet/Daf/Daf/bin/Release/net8.0/osx-arm64/publish/Daf
