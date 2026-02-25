@@ -1,376 +1,523 @@
-# DAF Framework
+# DAF Framework (DafCore + DafDb + DafGlobals)
 
-DAF is a lightweight PHP framework focused on fast server-side development with a controller pipeline, dependency injection, and a component-first view system. It also includes DafDb (a high-level query layer with migrations) and DafGlobals (utility primitives).
+This project uses a custom PHP framework composed of 3 packages:
 
-This README is structured as official documentation for the framework.
+- `DafCore`: web app runtime (Application, Routing, Controllers, Views, Components, Forms, DI, Session/Flash/CSRF).
+- `DafDb`: data layer (DbContext, DbSet, Queryable, attributes, migration generation/execution, SQL providers).
+- `DafGlobals`: shared utilities (collections, paths, dates, object mapping).
 
-## Table of Contents
+This README is based on the actual source in:
 
-- Overview
-- Philosophy
-- Requirements
-- Project Layout
-- Quick Start
-- Core Concepts
-  - Application and Routing
-  - Controllers and Middleware
-  - Dependency Injection
-  - Requests and Responses
-  - Validation
-  - Sessions and Flash
-  - Security (Anti-forgery)
-- Views and Components
-  - Component Markup
-  - Layouts and Host Layout
-  - Outlets (Head/Scripts)
-  - DafJs Navigation
-- DafDb (Data Layer)
-  - Context and Repositories
-  - Queryable API
-  - Includes and Object Graphs
-  - Change Tracking and SaveChanges
-  - Transactions
-  - Migrations and Snapshots
-  - JSON Repository
-- DafGlobals
-  - Collections
-  - Dates
-  - Path Helpers
-- Examples
-- Notes and Conventions
+- `vendor/DafCore`
+- `vendor/DafDb`
+- `vendor/DafGlobals`
 
-## Overview
+## 1. How A DAF App Boots
 
-DAF provides a minimal but expressive framework for building PHP web sites and APIs. It emphasizes:
-
-- Controller and pipeline-based routing
-- First-class dependency injection
-- A component-based view system with HTML-like tags
-- A data layer that turns lambdas into SQL
-- Schema migrations built from model metadata
-
-DAF is split into three libraries:
-
-- DafCore: application, routing, views, components, validation, session, and security
-- DafDb: repository and query layer, migrations, and providers (SQLite/MySQL)
-- DafGlobals: collections, dates, and path utilities
-
-## Philosophy
-
-- Keep the framework small and readable
-- Use attributes and reflection to reduce boilerplate
-- Make server-side rendering expressive with component tags
-- Provide powerful data access without heavy ORM overhead
-
-## Requirements
-
-DAF targets modern PHP with attributes and typed properties. Ensure your PHP version supports attributes (PHP 8.0+).
-
-## Project Layout
-
-Typical app structure:
-
-- `App/`
-  - `Views/`
-    - `_Layouts/`
-    - `_Host.php` (optional)
-    - `_GlobalUsing.php` (optional)
-  - `Controllers/`
-  - `Models/`
-- `public/` (web root)
-- `vendor/` (DAF libraries)
-
-## Quick Start
-
-A minimal entry point:
+Current app entrypoint (`index.php`):
 
 ```php
 <?php
-use DafCore\Application;
+namespace App;
+require_once "./Vendor/autoloader.php";
 
-$app = new Application(baseFolder: 'App');
+use App\Controllers\HomeController;
 
-$app->Get('/', function() {
-    return "Hello DAF";
-});
-
+$app = new ApplicationEx();
+$app->UseViews();
+$app->Router->RegisterControllers([HomeController::class]);
 $app->Run();
 ```
 
-A controller-based route:
+Runtime flow:
+
+1. `Application` creates DI container and registers framework services.
+2. `Router` resolves request path/method to a controller action.
+3. If views are enabled (`UseViews()`), `ViewManager` renders through host/layout pipeline.
+4. Route metadata is cached to `Vendor/storage/routes.cache.php`.
+
+## 2. DafCore
+
+## 2.1 Application and DI
+
+`DafCore\Application` wires core services automatically:
+
+- Request/Response: `IRequest`, `IResponse`
+- Rendering: `IViewManager`
+- Routing: `Router`
+- Session/Flash/Form services
+
+Useful APIs:
+
+- `UseViews()`
+- `Run()`
+- `AddGlobalMiddleware(callable $callback)`
+- `AddAntiForgeryToken()`
+
+DI is reflection-based via `ServicesProvidor` and constructor injection.
+
+## 2.2 Routing + Controllers (Attribute-based)
+
+Controller classes are registered once and scanned lazily:
+
+```php
+$app->Router->RegisterControllers([
+    App\Controllers\HomeController::class,
+]);
+```
+
+Controller example:
 
 ```php
 <?php
+namespace App\Controllers;
+
 use DafCore\Controllers\Controller;
 use DafCore\Controllers\Attributes\Route;
 use DafCore\Controllers\Attributes\HttpGet;
 
-#[Route('/products')]
-class ProductsController extends Controller
+#[Route("/")]
+class HomeController extends Controller
 {
-    #[HttpGet('')]
-    function Index() {
-        return $this->RenderView('Products/Index');
+    #[HttpGet]
+    public function Index(): string
+    {
+        return $this->Ok(App\Views\Pages\HomePage::class);
+    }
+
+    #[HttpGet("About")]
+    public function About(): string
+    {
+        return $this->Ok(App\Views\Pages\AboutPage::class);
     }
 }
 ```
 
-Register controllers:
+### Route attributes
 
-```php
-$app->RegisterControllers([
-    ProductsController::class,
-]);
-```
+- Class: `#[Route(path, prefix)]`
+- Method: `#[HttpGet]`, `#[HttpPost]`, `#[HttpPut]`, `#[HttpDelete]`
+- Middleware-like attributes with `Handle(...)` are auto-injected into route pipeline.
 
-## Core Concepts
+Built-in middleware attributes include:
 
-### Application and Routing
+- `#[Layout("MainLayout")]`
+- `#[AntiForgeryValidateToken("optional message")]`
+- `#[Placeholder(ViewClass::class, delayMs)]`
 
-DAF routes requests via a Router that supports direct routes and attribute-driven controllers. It builds a middleware pipeline and resolves method parameters through DI.
+### Route params
 
-```php
-$app->Get('/status', function() {
-    return "ok";
-});
-```
+Parameterized routes use `:name` segments, e.g. `"/users/:id"`.
 
-### Controllers and Middleware
+The value can be injected by parameter name in action/middleware callbacks.
 
-Controllers can return views or JSON. Middleware is implemented through attributes with a `Handle` method.
+## 2.3 Controller types
 
-```php
-use DafCore\Controllers\Attributes\Layout;
-use DafCore\Controllers\Attributes\HttpGet;
+- `DafCore\Controllers\Controller`: returns rendered views (`Ok(view, params)`, `NotFound(view)`, etc.).
+- `DafCore\Controllers\ApiController`: returns HTTP/text/json responses (`Ok($obj)`, `BadRequest()`, etc.).
 
-#[Layout('MainLayout')]
-#[HttpGet('')]
-function Index() {
-    return $this->RenderView('Home/Index');
-}
-```
+## 2.4 View + Component system
 
-### Dependency Injection
+DAF components are class+template pairs:
 
-DAF uses a lightweight DI container. Dependencies are injected into controllers, middleware, and action parameters by type.
+- Class: `Something.php` extends `DafCore\Component`
+- Template: `Something.view.php`
 
-```php
-function Index(\DafCore\Request $req, \DafCore\Response $res) {
-    return $res->Ok(['path' => $req->GetUrlPath()]);
-}
-```
-
-### Requests and Responses
-
-`Request` exposes URL, query, body, headers, cookies, and uploaded files. `Response` provides helpers for HTML and JSON.
-
-```php
-$res->Ok(['ok' => true]);
-$res->BadRequest('Invalid payload');
-```
-
-### Validation
-
-Use attributes to annotate model properties and validate them. You can also validate DTOs automatically when used as action parameters.
-
-```php
-class CreateUser extends \DafCore\AutoConstruct
-{
-    #[\DafCore\Attributes\Required]
-    public string $Email;
-}
-```
-
-### Sessions and Flash
-
-`Session` supports normal values and "flush" values cleared after render.
-
-```php
-$session->Set('user_id', 10);
-$session->AddFlushMsg('Saved successfully');
-```
-
-### Security (Anti-forgery)
-
-Use `AntiForgery` and the `<AntiForgeryToken>` component to emit and validate CSRF tokens.
-
-```php
-$app->AddAntiForgeryToken();
-```
-
-## Views and Components
-
-DAF views are PHP files with component-style tags. Components are resolved from namespaces and rendered recursively.
-
-### Component Markup
-
-```php
-<PageTitle>Products</PageTitle>
-<NavLink href="/products" StartWith="true">All</NavLink>
-```
-
-Components can inject services and access parameters:
+Example (`App/Views/Components/Alert.php`):
 
 ```php
 <?php
-/** @var DafCore\IComponent $this */
-$req = $this->Inject(DafCore\Request::class);
-$match = $this->Parameter('Match', 'bool') ?? true;
-?>
+namespace App\Views\Components;
+
+use DafCore\Component;
+
+class Alert extends Component {
+    public string $Message = "alert message";
+}
 ```
 
-### Layouts and Host Layout
-
-`ViewManager` supports a layout and optional host layout:
-
-- `App/Views/_Layouts/MainLayout.php`
-- `App/Views/_Layouts/_Host.php` (optional)
-
-### Outlets (Head/Scripts)
-
-Outlets let components push content into layout sections:
+Template (`Alert.view.php`):
 
 ```php
-<PageTitle>Dashboard</PageTitle>
+<?php /** @var App\Views\Components\Alert $this */ ?>
+<p style="color:red;"><?=$this->Message?></p>
 ```
 
-In the layout:
+Used from another view:
 
 ```php
-<?php $headOutlet->RenderOutlet(); ?>
+<App\Views\Components\Alert Message="Hello" />
 ```
 
-### DafJs Navigation
+### Important component conventions
 
-`<DafJs>` injects a client-side navigation helper that uses `morphdom` to update the page without full reloads. It also intercepts form submits by default.
+- Uppercase parameters are treated as component parameters and auto-bind to public typed properties.
+- Lowercase parameters are treated as raw HTML attributes.
+- Child content is rendered with `$this->RenderChildContent()`.
+- You can resolve services inside a component via `$this->Inject(Type::class)`.
 
-## DafDb (Data Layer)
+### Built-in layout/routing components
 
-### Context and Repositories
+Commonly used inside `Views/_Layouts/Host.view.php`:
 
-Create a context for SQLite or MySQL. Repositories map models to tables via attributes.
+- `<RouterView>` with `<Found>` and `<NotFound>`
+- `<RouteView />`
+- `<LayoutView>`
+- `<PageView />`
+- `<HeadOutlet />`, `<ScriptsOutlet />`
+- `<DafJs />`
+
+### Built-in utility components
+
+- `<PageTitle>...</PageTitle>`
+- `<NavLink href="...">...</NavLink>`
+- `<Script>` (queues script to scripts outlet)
+- `<FlashSummary />`
+- `<AntiForgeryToken />`
+
+## 2.5 Forms + validation
+
+Core form components:
+
+- `<Form ...>`
+- `<ValidationSummary />`
+- `<ValidationMessage For="FieldName" />`
+- Inputs: `<TextInput>`, `<EmailInput>`, `<PasswordInput>`, `<NumberInput>`, `<Checkbox>`, `<TextArea>`, `<Input>`
+
+Form example:
 
 ```php
-$ctx = new \DafDb\SqliteContext('storage/app.db');
+<Form id="signup-form" Method="post" ClientSideValidation="true">
+    <ValidationSummary class="alert alert-danger" />
+
+    <TextInput For="Email" class="form-control" />
+    <ValidationMessage For="Email" />
+
+    <PasswordInput For="Password" class="form-control" />
+    <ValidationMessage For="Password" />
+
+    <button type="submit">Sign up</button>
+</Form>
 ```
 
-Repository example:
+Validation attributes are in `DafCore\Attributes` (inside `Application.php`), including:
+
+- `Required`, `NotEmpty`, `NotNull`, `OnlyEmpty`
+- `Email`, `Url`, `Pattern`
+- `Range`, `Length`, `In`
+- `Json`, `JsonValidateClass`, `ArrayValidateClass`
+- `DisplayName`
+
+Server-side validation utility:
 
 ```php
-#[\DafDb\Attributes\Table('Users', \App\Models\User::class)]
-class UsersRepository extends \DafDb\Repository {}
+if (!DafCore\Validator::Validate($dto)) {
+    $errors = DafCore\Validator::GetErrors();
+}
 ```
 
-### Queryable API
+## 2.6 Request, Response, Session, Flash, CSRF
 
-Queryable provides fluent methods like `Where`, `OrderBy`, `Skip`, `Take`, `FirstOrDefault`, `ToArray`.
+### Request (`DafCore\Request`)
+
+- URL/method/query/headers/cookies/files access
+- Body parsing supports JSON, form-urlencoded, multipart (`$_POST`), fallback parsing
+- Body values are sanitized recursively for strings
+
+### Response (`DafCore\Response`)
+
+Fluent HTTP helpers:
+
+- `Status`, `Header`, `Headers`
+- `Send`, `Json`
+- `Redirect`, `RedirectBack`
+- `Ok`, `Created`, `NoContent`, `BadRequest`, `NotFound`, `Forbidden`, `Unauthorized`, `InternalError`
+
+### Session (`DafCore\Session`)
+
+- `Start`, `SetItem`, `TryGetItem`, `RemoveItem`, `Clear`, `Destroy`
+
+### Flash
+
+- Interfaces: `IFlashStore`, `IFlashMessages`
+- Default store: session-backed (`SessionFlashStore`)
+- Use `IFlashMessages` to add/get typed flash messages (`Ok`, `Warning`, `Error`)
+
+### Anti-forgery
+
+- `Application->AddAntiForgeryToken()` registers token generation middleware.
+- Render hidden token in forms with `<AntiForgeryToken />`.
+- Validate with `#[AntiForgeryValidateToken]` on endpoint.
+
+## 3. DafDb
+
+## 3.1 Core pieces
+
+- `Context` (DB connection + tracker + query execution)
+- `DbContext` (aggregates your typed `DbSet` properties)
+- `DbSet` (table access + add/update/remove/clear)
+- `Queryable` (LINQ-like query API)
+
+## 3.2 Define model + DbSet + DbContext
 
 ```php
-$users = $ctx->Table(UsersRepository::class)
-    ->Where(fn($u) => $u->IsActive == true)
-    ->OrderByDescending(fn($u) => $u->Id)
+<?php
+namespace App\Data\Models;
+
+use DafCore\AutoConstruct;
+use DafDb\Attributes\PrimaryKey;
+use DafDb\Attributes\AutoIncrement;
+use DafDb\Attributes\Unique;
+
+class User extends AutoConstruct
+{
+    #[PrimaryKey]
+    #[AutoIncrement]
+    public int $Id;
+
+    #[Unique]
+    public string $Email;
+
+    public string $Name;
+}
+```
+
+```php
+<?php
+namespace App\Data\DbSets;
+
+use DafDb\Query\DbSet;
+use DafDb\Attributes\Table;
+use App\Data\Models\User;
+
+#[Table('users', User::class)]
+class UserDbSet extends DbSet {}
+```
+
+```php
+<?php
+namespace App\Data;
+
+use DafDb\Context\DbContext;
+use DafDb\Context\MysqlContext;
+use App\Data\DbSets\UserDbSet;
+
+class AppDbContext extends DbContext
+{
+    public UserDbSet $Users;
+
+    public function __construct()
+    {
+        parent::__construct(new MysqlContext('db_name', 'db_user', 'db_pass'));
+    }
+}
+```
+
+Notes:
+
+- `DbSet` requires `#[Table(name, model)]`.
+- Model metadata comes from public properties + attributes.
+- Models are easiest when extending `DafCore\AutoConstruct`.
+
+## 3.3 Query API
+
+Typical usage:
+
+```php
+$users = $db->Users
+    ->Where(fn($u) => $u->Id > 10 && str_contains($u->Email, '@'))
+    ->OrderBy(fn($u) => $u->Name)
+    ->Skip(0)
     ->Take(20)
     ->ToArray();
+
+$one = $db->Users->FirstOrDefault(fn($u) => $u->Id == 1);
+$count = $db->Users->Count(fn($u) => $u->Id > 0);
+$exists = $db->Users->Any(fn($u) => $u->Email == 'admin@site.com');
 ```
 
-### Includes and Object Graphs
+Supported predicate helpers in `WhereParser` include:
 
-Define relationships using `DbInclude` on model properties, then include them with `Include` and `ThenInclude`.
+- Comparisons: `==`, `!=`, `<`, `>`, `<=`, `>=`
+- Logical: `&&`, `||`, `!`
+- Functions: `str_contains`, `str_starts_with`, `str_ends_with`, `in_array`
+
+Also supported:
+
+- `Include(fn($x) => $x->Relation)`
+- `ThenInclude(fn($r) => $r->SubRelation)`
+- `RowToArray(true|false)`
+
+## 3.4 Change tracking and SaveChanges
+
+`DbSet` mutation calls are queued, then committed:
 
 ```php
-$users = $ctx->Table(UsersRepository::class)
-    ->Include(fn($u) => $u->Roles)
-    ->ThenInclude(fn($r) => $r->Permissions)
-    ->ToArray();
+$db->Users->Add(['Email' => 'a@b.com', 'Name' => 'A']);
+$db->Users->Update(['Name' => 'New'], fn($u) => $u->Id == 1);
+$db->Users->Remove(fn($u) => $u->Id == 2);
+
+$db->SaveChanges();
 ```
 
-### Change Tracking and SaveChanges
+## 3.5 Attributes for schema metadata
 
-Changes are queued and persisted in a single transaction:
+Available attributes in `DafDb\Attributes`:
+
+- Class: `Table`
+- Property: `PrimaryKey`, `AutoIncrement`, `Unique`, `MaxLength`, `DefaultValue`, `DefaultValueSql`, `DbIgnore`, `ForeignKey`, `DbInclude`
+
+`ForeignKey` uses optional on-delete behaviors from `DafDb\OnDeleteAction`:
+
+- `CASCADE`, `SET_NULL`, `RESTRICT`, `NO_ACTION`, `SET_DEFAULT`
+
+## 3.6 Migrations
+
+Facade class: `DafDb\Migrations\Migrations`
+
+- `Generate(DbContext $dbContext, string $migrationName, string $appFolder)`
+- `Migrate(DbContext $dbContext, string $appFolder)`
+- `Rollback(DbContext $dbContext, string $appFolder)`
+
+Expected folders under app root:
+
+- `Migrations/*.php`
+- `Migrations/Snapshots/*_Snapshot.php`
+
+Minimal script example:
 
 ```php
-$user = $ctx->Table(UsersRepository::class)->FirstOrDefault(fn($u) => $u->Id == 1);
-$user->Name = 'Updated';
-$ctx->Table(UsersRepository::class)->Update($user);
-$ctx->SaveChanges();
+<?php
+require_once './Vendor/autoloader.php';
+
+use DafDb\Migrations\Migrations;
+use App\Data\AppDbContext;
+
+$db = new AppDbContext();
+$m = new Migrations();
+
+$appFolder = __DIR__ . '/App';
+
+$m->Generate($db, 'InitSchema', $appFolder);
+$m->Migrate($db, $appFolder);
+// $m->Rollback($db, $appFolder);
 ```
 
-### Transactions
+Generated migration classes extend `DafDb\Migrations\Migration` and implement `Up()` / `Down()` using `MigrationBuilder`.
+
+## 3.7 JsonSet (file-backed set)
+
+`DafDb\Query\JsonSet` gives queryable, filterable, mutable JSON-array storage with `SaveChanges()`.
+Useful for lightweight file-based data without SQL.
+
+## 4. DafGlobals
+
+## 4.1 Collections
+
+- `Collection` (mutable)
+- `ReadOnlyCollection` (immutable)
+- Common API via `ICollection`:
+  - `Add`, `Remove`, `Clear`
+  - `Where`, `Map`, `ForEach`, `Any`, `Count`
+  - `FirstOrDefault`, `SingleOrDefault`
+  - `Skip`, `Take`, `Reverse`, `FindKey`, `ToArray`
+
+Example:
 
 ```php
-$ctx->BigTransaction(function() use ($ctx) {
-    // multiple operations
-});
+use DafGlobals\Collections\Collection;
+
+$c = new Collection([1,2,3,4]);
+$evens = $c->Where(fn($x) => $x % 2 === 0)->ToArray();
 ```
 
-### Migrations and Snapshots
+## 4.2 Path helpers
 
-DAF generates migrations from model snapshots, with provider-specific SQL for SQLite and MySQL.
+`DafGlobals\IO\Path`:
+
+- `Path::Combine(...$parts)`
+- `Path::ResolveRelative($base, $relative)`
+
+## 4.3 Date types
+
+- `DafGlobals\Dates\DateOnly`
+- `DafGlobals\Dates\DateTime`
+- Shared interface: `IDate`
+
+Examples:
 
 ```php
-$migrations = new \DafDb\Migrations\Migrations();
-$migrations->Generate($dbContext, 'InitDb', 'App');
-$migrations->Migrate($dbContext, 'App');
+use DafGlobals\Dates\DateOnly;
+use DafGlobals\Dates\DateTime;
+
+$today = DateOnly::Today();
+$nextWeek = $today->AddDays(7);
+
+$now = DateTime::Now();
+$later = $now->AddHours(2)->AddMinutes(30);
 ```
 
-### JSON Repository
+These types are recognized by `DafDb` model hydration when used as property types.
 
-A file-backed repository with collection semantics:
+## 4.4 Object mapping
+
+`DafGlobals\Mapper\ObjectMapper::Map($source, $target, $mapping = [])`
+
+Supports rename + transform + getter/setter strategy flags.
+
+## 5. Practical conventions for this codebase
+
+- App root namespace is `App`.
+- Views are component-based (`*.php` + `*.view.php`).
+- Layout files are under `App/Views/_Layouts`.
+- `ViewManager` default layout is `MainLayout`.
+- Route cache is stored at `Vendor/storage/routes.cache.php`.
+- Autoloader currently uses `./Vendor/autoloader.php` in `index.php` (case-sensitive environments may require matching folder case exactly).
+
+## 6. Minimal end-to-end example
+
+1. Create page component:
 
 ```php
-$repo = new \DafDb\JsonRepository('storage/users.json', [
-    'model' => User::class,
-    'auto_increment' => 'Id',
-]);
+// App/Views/Pages/ProfilePage.php
+namespace App\Views\Pages;
+
+use DafCore\Component;
+
+class ProfilePage extends Component {
+    public string $Title = 'Profile';
+}
 ```
-
-## DafGlobals
-
-### Collections
-
-`Collection` and `ReadOnlyCollection` provide LINQ-style helpers such as `Map`, `Where`, `FirstOrDefault`, and `Count`.
-
-### Dates
-
-`DateOnly` and `DateTime` wrap immutable PHP dates and provide consistent formatting and arithmetic.
-
-### Path Helpers
-
-`Path::Combine` and `Path::ResolveRelative` normalize and resolve paths in a cross-platform way.
-
-## Examples
-
-Minimal view with layout:
 
 ```php
-// App/Views/Home/Index.php
-<PageTitle>Home</PageTitle>
-<h1>Welcome</h1>
+<!-- App/Views/Pages/ProfilePage.view.php -->
+<PageTitle><?=$this->Title?></PageTitle>
+<h1><?=$this->Title?></h1>
 ```
 
-Layout:
+2. Add controller route:
 
 ```php
-// App/Views/_Layouts/MainLayout.php
-<!doctype html>
-<html>
-<head>
-  <?php $headOutlet->RenderOutlet(); ?>
-</head>
-<body>
-  <?=$this->RenderChildContent()?>
-  <?php $scriptsOutlet->RenderOutlet(); ?>
-</body>
-</html>
+#[HttpGet('Profile')]
+public function Profile(): string {
+    return $this->Ok(App\Views\Pages\ProfilePage::class);
+}
 ```
 
-## Notes and Conventions
+3. Register controller in `index.php` and run.
 
-- Component tags are detected by a custom parser; tags must begin with an uppercase letter.
-- Attributes on controllers and actions can act as middleware.
-- `AutoConstruct` models can be instantiated from arrays or parameter lists.
-- Query lambdas are parsed from source; keep them simple and side-effect free.
+## 7. Summary
 
----
+DAF gives you:
 
-If you want a more formal multi-page docs structure (Markdown folders, navigation, and dedicated sections for API reference), tell me your preferred doc tooling (plain Markdown, MkDocs, Docusaurus, etc.).
+- Attribute-driven routing/controllers and middleware (`DafCore`)
+- Component-first server rendering with layout host pipeline (`DafCore`)
+- Typed query + migration system with model attributes (`DafDb`)
+- Small core utility layer for collections/dates/paths/mapping (`DafGlobals`)
+
+For new features in this app, the fastest pattern is:
+
+1. Add route method (attribute).
+2. Return view component class from controller.
+3. Build UI in `Component + .view.php`.
+4. For data, define `Model + DbSet + DbContext`, then generate/migrate.

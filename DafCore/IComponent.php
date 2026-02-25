@@ -29,14 +29,14 @@ interface IComponent{
     * @param string|null $type file path or null
     * @return mixed
     */
-   public function Parameter(string $name, string $type = null): mixed;
+   public function Parameter(string $name, ?string $type = null): mixed;
 
    /** Read a parameter and fail if missing or null.
     * @param string $name parameter name
     * @param string|null $type file path or null
     * @return mixed
     */
-   public function RequiredParameter(string $name, string $type = null): mixed;
+   public function RequiredParameter(string $name, ?string $type = null): mixed;
 
    public function GetType(): string;
 

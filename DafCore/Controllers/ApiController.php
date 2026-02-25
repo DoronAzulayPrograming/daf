@@ -2,33 +2,34 @@
 namespace DafCore\Controllers;
 
 class ApiController extends BaseController {
-    protected function Ok($obj = null, array $headers = null){
+
+    protected function Ok($obj = null, ?array $headers = null): string{
         return $this->response->Ok($obj, $headers);
     } 
-    public function Created($obj = null, array $headers = null){
+    protected function Created($obj = null, ?array $headers = null): string{
         return $this->response->Created($obj, $headers);
     }         
-    public function NoContent(){
+    protected function NoContent(): string{
         return $this->response->NoContent();
     }
             
-    public function BadRequest($msg = null){
+    protected function BadRequest(?string $msg = null): string{
         return $this->response->BadRequest($msg);
     }
 
-    public function NotFound($msg = null){
+    protected function NotFound(?string $msg = null): string{
         return $this->response->NotFound($msg);
     }
 
-    public function Forbidden($msg = null){
+    protected function Forbidden(?string $msg = null): string{
         return $this->response->Forbidden($msg);
     }
 
-    public function Unauthorized($msg = null){
+    protected function Unauthorized(?string $msg = null): string{
         return $this->response->Unauthorized($msg);
     }
 
-    public function InternalError($msg = null){
+    protected function InternalError(?string $msg = null): string{
         return $this->response->InternalError($msg);
     }
 }

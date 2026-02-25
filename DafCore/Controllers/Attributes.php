@@ -4,7 +4,8 @@ namespace DafCore\Controllers\Attributes;
 
 use DafCore\IRequest;
 use DafCore\IViewManager;
-use DafCore\ScriptsOutlet;
+use DafCore\Views\ScriptsOutlet;
+use DafGlobals\IO\Path;
         
 #[\Attribute(\Attribute::TARGET_CLASS)]
 class Route {
@@ -17,8 +18,8 @@ class Route {
 }
 
 abstract class HttpAttribute {
-    public string | null $Path = null;
-    public function __construct(string | null $path = null) {
+    public ?string $Path = null;
+    public function __construct(?string $path = null) {
         $this->Path = $path;
     }
 }
@@ -42,8 +43,8 @@ class Layout {
         $this->name = $layoutName;
     }
 
-    function Handle(\DafCore\Controllers\Controller $c, callable $next){
-        $c->SetLayout($this->name);
+    function Handle(IViewManager $vm, callable $next){
+        $vm->SetLayout($this->name);
         return $next();
     }
 }
@@ -58,22 +59,18 @@ class AntiForgeryValidateToken{
                 return $next();
             }
         }
-
+        $status = \DafCore\Response::HTTP_BAD_REQUEST;
         $msg = empty($this->errorMsg) ? "Invalid CSRF token." : $this->errorMsg;
+        $filePath = Path::Combine(\DafCore\Application::$BaseFolder, "Views", "_ErrorPage");
         $view = "";
-        if(file_exists(\DafCore\Application::$BaseFolder . "/Views/_Errors/_400.php")){
-            $view = "_Errors/_400";
-        } else if(file_exists(\DafCore\Application::$BaseFolder . "/Views/_400.php")){
-            $view = "_400";
-        } else if(file_exists(\DafCore\Application::$BaseFolder . "/Views/_ErrorPage.php")){
-            $view = "_ErrorPage";
+        if(file_exists("$filePath.php") || file_exists("$filePath.view.php")){
+            $view = $filePath;
         } else {
-            $response->BadRequest($msg);
-            return;
+            return $response->BadRequest($msg);
         }
 
-        $response->Status(\DafCore\Response::HTTP_BAD_REQUEST);
-        echo $viewManager->RenderView($view, ["Msg"=>$msg]);
+        $response->Status($status);
+        return $viewManager->RenderView($view, ["Status"=>$status, "Message"=>$msg]);
     }
 }
 
@@ -93,7 +90,7 @@ class Placeholder {
         return $returnUrl;
     }
 
-    function Handle(IRequest $req, ScriptsOutlet $scriptsOutlet, IViewManager $vm, callable $next){
+    function Handle(IRequest $req, ScriptsOutlet $scriptsOutlet, IViewManager $vm, callable $next): string {
         if(!empty($req->GetHeaders()['daf-placeholder'])){
             return $next();
         }
@@ -120,9 +117,6 @@ class Placeholder {
         },".$this->dellay." )
         </script>");
 
-        echo $vm->RenderView($this->viewName);
+        return $vm->RenderView($this->viewName);
     }
 }
-
-
-?>

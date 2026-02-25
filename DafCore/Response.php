@@ -1,248 +1,216 @@
 <?php
 namespace DafCore;
+
 interface IResponse
 {
-    function Reset();
-    function GetStatus() : int ;
-    function Status(int $statusCode, string $reasonPhrase = null) : self;
-    function Send(string $text = null, array $headers = null);
-    function Json(mixed $data, array $headers = null);
+    public function GetStatus(): int;
 
-    function Redirect(string $location = "");
-    function RedirectBack();
+    public function Status(int $statusCode, ?string $reasonPhrase = null): self;
+    public function Header(string $name, string $value): self;
+    public function Headers(array $headers): self;
 
-    function Ok(mixed $obj = null, array $headers = null);
-    function Created(mixed $obj = null, array $headers = null);
-    function InternalError(string $msg = null);
-    function NoContent();
-    function BadRequest(string $msg = null);
-    function NotFound(string $msg = null);
-    function Forbidden(string $msg = null);
-    function Unauthorized(string $msg = null);
+    // Return payload string (no echo, no reset)
+    public function Send(?string $text = null, ?array $headers = null): string;
+    public function Json(mixed $data, ?array $headers = null): string;
+
+    // Return payload string (usually empty for redirect/no-content)
+    public function Redirect(string $location = "", int $statusCode = 302): string;
+    public function RedirectBack(int $statusCode = 302): string;
+
+    public function Ok(mixed $obj = null, ?array $headers = null): string;
+    public function Created(mixed $obj = null, ?array $headers = null): string;
+    public function InternalError(?string $msg = null): string;
+    public function NoContent(): string;
+    public function BadRequest(?string $msg = null): string;
+    public function NotFound(?string $msg = null): string;
+    public function Forbidden(?string $msg = null): string;
+    public function Unauthorized(?string $msg = null): string;
 }
-class Response implements IResponse {
-    private $statusCode;
-    private $reasonPhrase;
-    private $headers;
-    private $body;
 
-    public function __construct($statusCode = 200, $reasonPhrase = null) {
-        $this->status($statusCode, $reasonPhrase);
-        $this->headers = [];
-        $this->body = '';
+class Response implements IResponse
+{
+    public const HTTP_OK = 200;
+    public const HTTP_CREATED = 201;
+    public const HTTP_NO_CONTENT = 204;
+    public const HTTP_FOUND = 302;
+    public const HTTP_BAD_REQUEST = 400;
+    public const HTTP_UNAUTHORIZED = 401;
+    public const HTTP_FORBIDDEN = 403;
+    public const HTTP_NOT_FOUND = 404;
+    public const HTTP_INTERNAL_ERROR = 500;
+
+    private int $statusCode = self::HTTP_OK;
+    private string $reasonPhrase = 'OK';
+    private array $headers = [];
+
+
+    public function GetStatus(): int
+    {
+        return $this->statusCode;
     }
 
-    public function Reset() {
-        $this->statusCode = 200;
-        $this->reasonPhrase = null;
-        $this->headers = [];
-        $this->body = '';
-    }
-
-    public function GetStatus() : int { return $this->statusCode; }
-    public function Status($statusCode, $reasonPhrase = null) : self {
+    public function Status(int $statusCode, ?string $reasonPhrase = null): self
+    {
         $this->statusCode = $statusCode;
-        $this->reasonPhrase = $reasonPhrase ? $reasonPhrase : $this->getHttpStatusReasonPhrase($statusCode);
-        
+        $this->reasonPhrase = $reasonPhrase ?? self::ReasonPhraseFor($statusCode);
+
         http_response_code($this->statusCode);
         header(sprintf('HTTP/1.1 %d %s', $this->statusCode, $this->reasonPhrase), true, $this->statusCode);
+
         return $this;
     }
 
-    public function Send($text = null, array $headers = null) {
-        $this->body = $text ?? ""; 
-        
-        if($headers === null)
-            header("Content-Type: text/html");
-        else $this->sendHeaders($headers);
-
-        echo $this->body;
-
-        $this->reset();
-    }
-    
-    public function Json($data, array $headers = null) {
-        $this->body = $this->json_stringify($data); 
-
-        if(!isset($headers))
-            header("Content-Type: application/json; charset=utf-8");
-        else $this->sendHeaders($headers);
-
-        echo $this->body;
-
-        $this->reset();
+    public function Header(string $name, string $value): self
+    {
+        $this->headers[$name] = $value;
+        header($name . ': ' . $value, true);
+        return $this;
     }
 
-    
-    private function sendHeaders(array $headers) {
+    public function Headers(array $headers): self
+    {
         foreach ($headers as $name => $value) {
-            header(sprintf('%s: %s', $name, $value));
+            $this->Header((string)$name, (string)$value);
+        }
+        return $this;
+    }
+
+    public function Send(?string $text = null, ?array $headers = null): string
+    {
+        if ($headers !== null) {
+            $this->Headers($headers);
+        } elseif (!isset($this->headers['Content-Type'])) {
+            $this->Header('Content-Type', 'text/html; charset=utf-8');
+        }
+
+        return $text ?? '';
+    }
+
+    public function Json(mixed $data, ?array $headers = null): string
+    {
+        if ($headers !== null) {
+            $this->Headers($headers);
+        } elseif (!isset($this->headers['Content-Type'])) {
+            $this->Header('Content-Type', 'application/json; charset=utf-8');
+        }
+
+        try {
+            $json = json_encode($data, JSON_THROW_ON_ERROR);
+            return $json === false ? '' : $json;
+        } catch (\Throwable $e) {
+            $this->Status(self::HTTP_INTERNAL_ERROR);
+            return '{"error":"JSON encode failed"}';
         }
     }
 
-    function Redirect($location = ""){
-        header("Location: $location");
-        //exit();
-    }
-    
-    function RedirectBack(){
-        header('Location: ' . $_SERVER['HTTP_REFERER']);
-        exit();
+    public function Redirect(string $location = "", int $statusCode = self::HTTP_FOUND): string
+    {
+        $this->Status($statusCode);
+        $this->Header('Location', $location);
+        return '';
     }
 
-    const HTTP_OK = 200;
-    const HTTP_CREATED = 201;
-    const HTTP_NO_CONTENT = 204;
-    const HTTP_BAD_REQUEST = 400;
-    const HTTP_FOUND = 302;
-    const HTTP_UNAUTHORIZED = 401;
-    const HTTP_NOT_FOUND = 404;
-    const HTTP_FORBIDDEN = 403;
-    const HTTP_INTERNAL_ERROR = 500;
+    public function RedirectBack(int $statusCode = self::HTTP_FOUND): string
+    {
+        $location = $_SERVER['HTTP_REFERER'] ?? '/';
+        return $this->Redirect($location, $statusCode);
+    }
 
-
-    public function Ok($obj = null, array $headers = null){
+    public function Ok(mixed $obj = null, ?array $headers = null): string
+    {
         $this->Status(self::HTTP_OK);
-        if(isset($obj))
-        {
-            if(is_string($obj))
-                $this->Send($obj,$headers);
-            else $this->Json($obj,$headers);
+
+        if ($obj === null) {
+            return $this->Send('', $headers);
         }
-        else $this->Send(null,$headers);
+
+        return is_string($obj)
+            ? $this->Send($obj, $headers)
+            : $this->Json($obj, $headers);
     }
-    public function Created($obj = null, array $headers = null){
+
+    public function Created(mixed $obj = null, ?array $headers = null): string
+    {
         $this->Status(self::HTTP_CREATED);
-        if($obj)
-        {
-            if(!(is_array($obj) || is_object($obj))){
-                $this->Send($obj,$headers);
-            }
-            else $this->Json($obj,$headers);
+
+        if ($obj === null) {
+            return $this->Send('', $headers);
         }
-        else $this->Send(null,$headers);
-    }
-    
-    public function InternalError($msg = null){
-        $this->Status(self::HTTP_INTERNAL_ERROR)->Send($msg);
-    }
-    
-    public function NoContent(){
-        $this->Status(self::HTTP_NO_CONTENT)->Send();
+
+        return is_string($obj)
+            ? $this->Send($obj, $headers)
+            : $this->Json($obj, $headers);
     }
 
-    public function BadRequest($msg = null){
-        $this->Status(self::HTTP_BAD_REQUEST)->Send($msg);
+    public function InternalError(?string $msg = null): string
+    {
+        return $this->Status(self::HTTP_INTERNAL_ERROR)->Send($msg ?? 'Internal Server Error');
     }
 
-    public function NotFound($msg = null){
-        $this->Status(self::HTTP_NOT_FOUND)->Send($msg);
+    public function NoContent(): string
+    {
+        return $this->Status(self::HTTP_NO_CONTENT)->Send('');
     }
 
-    public function Forbidden($msg = null){
-        $this->Status(self::HTTP_FORBIDDEN)->Send($msg);
+    public function BadRequest(?string $msg = null): string
+    {
+        return $this->Status(self::HTTP_BAD_REQUEST)->Send($msg ?? 'Bad Request');
     }
 
-    public function Unauthorized($msg = null){
-        $this->Status(self::HTTP_UNAUTHORIZED)->Send($msg);
+    public function NotFound(?string $msg = null): string
+    {
+        return $this->Status(self::HTTP_NOT_FOUND)->Send($msg ?? 'Not Found');
     }
 
-
-    
-    private function json_stringify($obj){
-        try
-        {
-            return json_encode($obj, JSON_THROW_ON_ERROR);
-        }
-        catch (\Throwable $e)
-        {
-            return "Throwable on json stringify: " . $e->getMessage() . PHP_EOL;
-        }
+    public function Forbidden(?string $msg = null): string
+    {
+        return $this->Status(self::HTTP_FORBIDDEN)->Send($msg ?? 'Forbidden');
     }
-    private function getHttpStatusReasonPhrase($statusCode) {
-        switch ($statusCode) {
-            case 100:
-                return 'Continue';
-            case 101:
-                return 'Switching Protocols';
-            case 200:
-                return 'OK';
-            case 201:
-                return 'Created';
-            case 202:
-                return 'Accepted';
-            case 203:
-                return 'Non-Authoritative Information';
-            case 204:
-                return 'No Content';
-            case 205:
-                return 'Reset Content';
-            case 206:
-                return 'Partial Content';
-            case 300:
-                return 'Multiple Choices';
-            case 301:
-                return 'Moved Permanently';
-            case 302:
-                return 'Found';
-            case 303:
-                return 'See Other';
-            case 304:
-                return 'Not Modified';
-            case 305:
-                return 'Use Proxy';
-            case 307:
-                return 'Temporary Redirect';
-            case 400:
-                return 'Bad Request';
-            case 401:
-                return 'Unauthorized';
-            case 402:
-                return 'Payment Required';
-            case 403:
-                return 'Forbidden';
-            case 404:
-                return 'Not Found';
-            case 405:
-                return 'Method Not Allowed';
-            case 406:
-                return 'Not Acceptable';
-            case 407:
-                return 'Proxy Authentication Required';
-            case 408:
-                return 'Request Timeout';
-            case 409:
-                return 'Conflict';
-            case 410:
-                return 'Gone';
-            case 411:
-                return 'Length Required';
-            case 412:
-                return 'Precondition Failed';
-            case 413:
-                return 'Request Entity Too Large';
-            case 414:
-                return 'Request-URI Too Long';
-            case 415:
-                return 'Unsupported Media Type';
-            case 416:
-                return 'Requested Range Not Satisfiable';
-            case 417:
-                return 'Expectation Failed';
-            case 500:
-                return 'Internal Server Error';
-            case 501:
-                return 'Not Implemented';
-            case 502:
-                return 'Bad Gateway';
-            case 503:
-                return 'Service Unavailable';
-            case 504:
-                return 'Gateway Timeout';
-            case 505:
-                return 'HTTP Version Not Supported';
-            default:
-                return 'Internal Server Error';
-        }
+
+    public function Unauthorized(?string $msg = null): string
+    {
+        return $this->Status(self::HTTP_UNAUTHORIZED)->Send($msg ?? 'Unauthorized');
+    }
+
+    private static function ReasonPhraseFor(int $statusCode): string
+    {
+        return match ($statusCode) {
+            100 => 'Continue',
+            101 => 'Switching Protocols',
+            200 => 'OK',
+            201 => 'Created',
+            202 => 'Accepted',
+            203 => 'Non-Authoritative Information',
+            204 => 'No Content',
+            205 => 'Reset Content',
+            206 => 'Partial Content',
+            300 => 'Multiple Choices',
+            301 => 'Moved Permanently',
+            302 => 'Found',
+            303 => 'See Other',
+            304 => 'Not Modified',
+            307 => 'Temporary Redirect',
+            308 => 'Permanent Redirect',
+            400 => 'Bad Request',
+            401 => 'Unauthorized',
+            403 => 'Forbidden',
+            404 => 'Not Found',
+            405 => 'Method Not Allowed',
+            406 => 'Not Acceptable',
+            408 => 'Request Timeout',
+            409 => 'Conflict',
+            410 => 'Gone',
+            412 => 'Precondition Failed',
+            413 => 'Payload Too Large',
+            415 => 'Unsupported Media Type',
+            422 => 'Unprocessable Entity',
+            429 => 'Too Many Requests',
+            500 => 'Internal Server Error',
+            501 => 'Not Implemented',
+            502 => 'Bad Gateway',
+            503 => 'Service Unavailable',
+            504 => 'Gateway Timeout',
+            default => 'Internal Server Error',
+        };
     }
 }

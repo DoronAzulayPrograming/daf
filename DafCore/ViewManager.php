@@ -2,6 +2,8 @@
 namespace DafCore;
 
 use DafGlobals\IO\Path;
+use DafCore\Components\Routing\HostComponent;
+use DafCore\Views\Components\SystemComponent;
 
 interface IViewManager
 {
@@ -15,18 +17,21 @@ interface IViewManager
 
 class ViewManager implements IViewManager
 {
-   private array $onAfterRender = [];
    private array $onRender = [];
-   private string $layout = "MainLayout";
+   private array $onAfterRender = [];
+   private string $layout = "";
+
+   public function __construct(){
+      $this->layout = $this->resolveFullName("MainLayout");
+   }
+
+   function SetLayout(string $layout) : IViewManager {
+      $this->layout = $this->resolveFullName($layout);
+      return $this;
+   }
 
    function GetLayout(): string{
       return $this->layout;
-   }
-
-   function SetLayout(string $layout): IViewManager
-   {
-      $this->layout = $layout;
-      return $this;
    }
 
    function OnRender(callable $callback): void{
@@ -35,6 +40,8 @@ class ViewManager implements IViewManager
    function OnAfterRender(callable $callback): void{
       $this->onAfterRender[] = $callback;
    }
+
+
    private function triggerOnRender(): void{
       foreach($this->onRender as $callback){
          $callback();
@@ -46,42 +53,35 @@ class ViewManager implements IViewManager
       }
    }
 
+   private function isShortName(string $name):bool { return !str_contains($name,"\\"); }
+   private function resolveFullName(string $shortName):string { return $this->isShortName($shortName) ? Application::$BaseFolder."\\Views\\_Layouts\\$shortName" : $shortName; }
+
+
+   /**
+    * Render a view inside the Host shell.
+    * This keeps page rendering in the host/layout pipeline.
+    * @return string
+    */
    public function RenderView(string $view, array $params = []): string
    {
-      $base = Application::$BaseFolder;
-
-      // Global Using
-      $globalUsing = Path::Combine($base,"Views","_GlobalUsing");
-      if (file_exists("$globalUsing.php")) {
-         (new SystemComponent($globalUsing))->Render();
-      }
-
       $this->triggerOnRender();
+   
+      try{
+         $viewComponent = new SystemComponent($view, $params);
 
-      $content = '';
-      // Load main view
-      $viewPath = Path::Combine($base,"Views",$view);
-      $viewComponent = new SystemComponent(file_exists("$viewPath.php") ? $viewPath : $view, $params);
+         $base = Application::$BaseFolder;
 
-      // Load layout
-      $layoutPath = Path::Combine($base,"Views","_Layouts", $this->layout);
-      if (file_exists("$layoutPath.php")) {
-         $layoutComponent = new LayoutComponent($layoutPath);
-         $layoutComponent->Child = $viewComponent;
+         $hostPath = Path::Combine($base, "Views", "_Layouts", "Host");
+         if(!file_exists("$hostPath.view.php")) return $viewComponent->Render();
+
+         $hostPath = str_replace("/","\\", $hostPath);
+         $hostComponent = new HostComponent(new SystemComponent($hostPath, ['StartWith' => 'RouterView']));
+         $hostComponent->Cascade('PageCallback', fn()=>$viewComponent->Render());
+         $hostComponent->Load();
+
+         return $hostComponent->Render();
+      }finally{
+         $this->triggerOnAfterRender();
       }
-
-      // Apply host layout if exists
-      $hostPath = Path::Combine($base,"Views","_Layouts", "_Host");
-      if (file_exists("$hostPath.php") && isset($layoutComponent)) {
-         $hostComponent = new HostComponent($hostPath);
-         $hostComponent->Child = $layoutComponent;
-         $content = $hostComponent->Render();
-      }
-      else if (isset($layoutComponent)) $content = $layoutComponent->Render();
-      else $content = $viewComponent->Render();
-
-      $this->triggerOnAfterRender();
-
-      return $content;
    }
 }

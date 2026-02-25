@@ -1,25 +1,31 @@
 <?php
 namespace DafCore;
 
+use DafCore\Routing\RouteMatchContext;
+use DafCore\Views\HeadOutlet;
+use DafCore\Views\ScriptsOutlet;
+use DafGlobals\IO\Path;
+use DafCore\Routing\Router;
+use DafCore\Flash\IFlashStore;
+use DafCore\Forms\FormContext;
+use DafCore\Forms\FormValidator;
+use DafCore\Forms\IFormFeedback;
+use DafCore\Forms\IFormValidator;
 use DafCore\Flash\FlashMessages;
 use DafCore\Flash\IFlashMessages;
-use DafCore\Forms\FormContext;
-use DafCore\Forms\IFormFeedback;
 use DafCore\Forms\FlashFormFeedback;
-use DafCore\Forms\IFormValidator;
-use DafCore\Forms\FormValidator;
-use DafCore\Flash\IFlashStore;
 use DafCore\Flash\SessionFlashStore;
+use DafCore\Views\Components\ComponentRegistry;
 
 require_once __DIR__."/Controllers/Attributes.php";
 
 class Application{
-    use RouterMapMethods;
 
     public static $BuildOnly = false;
     private bool $isRelease = true;
     public static string $BaseFolder = '';
     public Router $Router;
+    public IViewManager $ViewManager;
     public IServicesProvidor $Services;
     private string $executionTime = "";
 
@@ -34,6 +40,32 @@ class Application{
         $this->registerSystemComponents();
     }
 
+
+    public function UseViews(): void { $this->Router->UseViews(); }
+
+    public function Run(): void {
+        if (self::$BuildOnly) return;
+
+        $startTime = microtime(true);
+
+        $cacheFile = Path::Combine("Vendor", "storage", "routes.cache.php");
+
+        $loaded = $this->Router->LoadRoutesCache($cacheFile);
+
+        echo $this->Router->Resolve();
+
+        if (!$loaded || $this->Router->NeedsRecache()) {
+            $this->Router->SaveRoutesCache($cacheFile);
+        }
+
+        $endTime = microtime(true);
+        $time = $endTime - $startTime;
+
+        $this->executionTime = number_format($time*10, 3);
+    }
+
+
+    public function GetExecutionTime(): string { return $this->executionTime; }
     public function AddGlobalMiddleware($callback): void { $this->Router->AddMiddleware($callback); }
 
     public function AddAntiForgeryToken(){
@@ -46,66 +78,28 @@ class Application{
          });
     }
 
-    public function Run(): void {
-        if (self::$BuildOnly) return;
 
-        $startTime = microtime(true);
-
-        $cacheFile = \DafGlobals\IO\Path::Combine("vendor", "storage", "routes.cache.php");
-        $loaded = $this->Router->LoadRoutesCache($cacheFile);
-
-        echo $this->Router->Resolve();
-
-        if (!$loaded || Router::$NeedRecach) {
-            $this->Router->SaveRoutesCache($cacheFile);
-        }
-
-        $endTime = microtime(true);
-        $time = $endTime - $startTime;
-
-        $this->executionTime = number_format($time*10, 3);
+    private function loadAppBaseFolder(): void{
+        self::$BaseFolder = basename(dirname(__DIR__,2));
     }
-
-
-    public function GetExecutionTime(): string { return $this->executionTime; }
-
-    /**
-     * Returns the current request host name.
-     *
-     * This value is taken from the HTTP_HOST server variable and represents
-     * the domain name (and optional port) used by the client to access
-     * the application (e.g. "example.com" or "example.com:8080").
-     *
-     * @return string The request host name.
-     */
-    static function HostName(): string { return $_SERVER['HTTP_HOST']; }
-
-    /**
-     * Determines whether the current request is using HTTPS.
-     *
-     * Checks the HTTPS server variable and returns true if the request
-     * was made over a secure SSL/TLS connection.
-     *
-     * @return bool True if the request is HTTPS, otherwise false.
-     */
-    static function IsHttps(): bool { return !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'; }
-
 
     private function registerSystemComponents()
     {
         $arr = [
             'vendor\DafCore\Components',
             'vendor\DafCore\Components\Forms',
+            'vendor\DafCore\Components\Routing',
             'vendor\DafCore\Components\Forms\Inputs',
-            ];
+        ];
 
         if($this->isRelease){ $arr = [
-            'phar://vendor\DafCore.phar\Components' ,
-            'phar://vendor\DafCore.phar\Components\Forms' ,
-            'phar://vendor\DafCore.phar\Components\Forms\Inputs' ,
+            'Phar\vendor\DafCore\Components',
+            'Phar\vendor\DafCore\Components\Forms',
+            'Phar\vendor\DafCore\Components\Routing',
+            'Phar\vendor\DafCore\Components\Forms\Inputs',
         ]; }
 
-        SystemComponent::AddNamespaces($arr);
+        //ComponentRegistry::AddNamespaces($arr);
     }
 
     private function registerSystemServices(ServicesProvidor $container) {
@@ -142,6 +136,7 @@ class Application{
         
         try {
             // Load Router here
+            $this->ViewManager = $container->GetOne(IViewManager::class);
             $this->Router = $container->GetOne(Router::class);
 
         } catch (\Throwable $th) {
@@ -149,54 +144,42 @@ class Application{
         }
     }
 
-    private function loadAppBaseFolder(): void{
-        self::$BaseFolder = basename(dirname(__DIR__,2));
-    }
+
+
+    /**
+     * Returns the current request host name.
+     *
+     * This value is taken from the HTTP_HOST server variable and represents
+     * the domain name (and optional port) used by the client to access
+     * the application (e.g. "example.com" or "example.com:8080").
+     *
+     * @return string The request host name.
+     */
+    public static function HostName(): string { return $_SERVER['HTTP_HOST']; }
+
+    /**
+     * Determines whether the current request is using HTTPS.
+     *
+     * Checks the HTTPS server variable and returns true if the request
+     * was made over a secure SSL/TLS connection.
+     *
+     * @return bool True if the request is HTTPS, otherwise false.
+     */
+    public static function IsHttps(): bool { return !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'; }
 }
 
 class ApplicationContext {
-    public IRequest $request;
-    public IResponse $response;
+    public IRequest $Request;
+    public IResponse $Response;
 
-    public $endPoint;
-    public array $endPointMetadata = [];
+    public ?RouteMatchContext $RouteContext = null;
 
     public function __construct(IRequest $request, IResponse $response){
-        $this->request = $request;
-        $this->response = $response;
+        $this->Request = $request;
+        $this->Response = $response;
     }
 }
-/**
- * @mixin Application
- */
-trait RouterMapMethods{
-    function Get(string $path, ...$callback) {
-        $this->Router->Get($path, ...$callback);
-    }
 
-    function Post(string $path, ...$callback) {
-        $this->Router->Post($path, ...$callback);
-    }
-
-    function Put(string $path, ...$callback) {
-        $this->Router->Put($path, ...$callback);
-    }
-
-    function Delete(string $path, ...$callback) {
-        $this->Router->Delete($path, ...$callback);
-    }
-
-    function SetRouteBasePath(string $path){
-        $this->Router->SetBasePath($path);
-    }
-    function AddController(string $controller){
-        $this->Router->AddController($controller);
-    }
-    function RegisterControllers(array $controllers){
-        $this->Router->RegisterControllers($controllers);
-    }
-
-}
 
 
 namespace DafCore\Attributes;

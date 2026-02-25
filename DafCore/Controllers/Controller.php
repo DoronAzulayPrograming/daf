@@ -1,51 +1,61 @@
 <?php
 namespace DafCore\Controllers;
 use DafCore\IViewManager;
+use DafCore\Response;
 
-class Controller extends BaseController {  
+class Controller extends BaseController
+{
     private $layout = "MainLayout";
     private IViewManager $viewManager;
 
-    function SetLayout(string $layout) : static{
+    public function SetLayout(string $layout) : static{
         $this->layout = $layout;
+        $this->viewManager->SetLayout($layout);
+
         return $this;
     }
-    
-    function SetViewManager(IViewManager $viewManager){
+
+    public function SetViewManager(IViewManager $viewManager): void{
         $this->viewManager = $viewManager;
     }
-    
+
     protected function Status(int $status): static{
         $this->response->Status($status);
         return $this;
     }
 
-    protected function RenderView($view, $params = []){
-        return $this->viewManager->SetLayout($this->layout)->RenderView($view, $params);
+    protected function RenderView($view, $params = []): string{
+        return $this->viewManager->RenderView($view, $params);
     }
+
     
-    protected function Ok(string $view, array $params = []){
-        return $this->Status(200)->RenderView($view, $params);
+    protected function Ok(string $view, array $params = []): string{
+        return $this->Status(Response::HTTP_OK)->RenderView($view, $params);
     }
-    protected function InternalError(string $view, array $params = []){
-        return $this->Status(500)->RenderView($view, $params);
+    protected function InternalError(string $view, array $params = []): string{
+        return $this->Status(Response::HTTP_INTERNAL_ERROR)->RenderView($view, $params);
     }
              
-    protected function BadRequset(string $view, array $params = []): string {
-        return $this->Status(400)->RenderView($view, $params);
+    protected function BadRequest(string $view, array $params = []): string {
+        return $this->Status(Response::HTTP_BAD_REQUEST)->RenderView($view, $params);
     }
 
     protected function NotFound(string $view, array $params = []): string {
-        return $this->Status(404)->RenderView($view, $params);
+        return $this->Status(Response::HTTP_NOT_FOUND)->RenderView($view, $params);
     }
 
-    protected function Redirect($location = ""){
-        header('Location: ' . $location);
-        exit();
+
+    protected function Created(string $view, array $params = []): string{
+        return $this->Status(Response::HTTP_CREATED)->RenderView($view, $params);
+    }         
+    protected function NoContent(string $view, array $params = []): string{
+        return $this->Status(Response::HTTP_NO_CONTENT)->RenderView($view, $params);
     }
-    
-    protected function RedirectBack(){
-        header('Location: ' . $_SERVER['HTTP_REFERER']);
-        exit();
+    protected function Forbidden(string $view, array $params = []): string{
+        return $this->Status(Response::HTTP_FORBIDDEN)->RenderView($view, $params);
     }
+    protected function Unauthorized(string $view, array $params = []): string{
+        return $this->Status(Response::HTTP_UNAUTHORIZED)->RenderView($view, $params);
+    }
+
 }

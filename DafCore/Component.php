@@ -1,39 +1,64 @@
 <?php
 namespace DafCore;
 
-class Component implements IComponent{
-    public static bool $UseNewUsingSystem = true;
+use DafCore\Views\Components\SystemComponent;
+use DafCore\Views\Components\ComponentsParser;
+use DafCore\Views\Components\ComponentRegistry;
+
+
+class Component implements IComponent {
+    protected static bool $extractUsing = true;
+    public static function DisableExtractUsing(): void { self::$extractUsing = false; }
    
     /** Wrap a component with a restricted, template-friendly API.
      * @param SystemComponent $_
      */
-    public function __construct(protected SystemComponent $_) { }
+    public function __construct(protected SystemComponent $_)
+    {
+    }
+
+
+    public function GetParent(): ?Component { return $this->_->Parent?->ViewComponent; }
 
     /** Register namespaces for component discovery.
      * @param string|array $useing string|string[] of file path
      * @return void
      */
-    public function Use(string|array $useing): void{ $this->_->Use($useing); }
+    public function Use(string|array $useing): void{ ComponentRegistry::AddNamespaces($useing); }
 
     /** Resolve a service from the DI container.
      * @param string $type dependency key 
      * @return mixed dependency
      */
-    public function Inject(string $type): mixed{ return $this->_->Inject($type); }
+    public function Inject(string $type): mixed{ return ServicesProvidor::$DI->getOne($type); }
 
     /** Read a parameter (explicit or cascaded), optionally type-check.
      * @param string $name parameter name
      * @param string|null $type file path or null
      * @return mixed
      */
-    public function Parameter(string $name, string $type = null): mixed{ return $this->_->Parameter($name, $type); }
+    public function Parameter(string $name, ?string $type = null): mixed {
+        $val = null;
+        $this->_->TryGetParameter($val, $name, $type);
+        return $val;
+    }
 
     /** Read a parameter and fail if missing or null.
      * @param string $name parameter name
      * @param string|null $type file path or null
      * @return mixed
      */
-    public function RequiredParameter(string $name, string $type = null): mixed { return $this->_->RequiredParameter($name, $type); }
+    public function RequiredParameter(string $name, ?string $type = null): mixed
+    {
+        $val = null;
+        if (!$this->_->TryGetParameter($val, $name, $type))
+            die("Required parameter $name is not set in component {$this->GetType()}");
+        
+        if ($val === null)
+            die("Required Parameter $name is not set in component {$this->GetType()}");
+    
+        return $val;
+    }
 
     public function GetType(): string { return $this->_->GetType(); }
 
@@ -43,17 +68,57 @@ class Component implements IComponent{
      * @param array|string $for
      * @return void
      */
-    public function Cascade(string $key, mixed $value, array|string $for = 'all'):void { $this->_->Cascade($key, $value, $for); }
+
+    public function Cascade(string $key, mixed $value = null, array|string $for = 'all'):void { $this->_->Cascades[$key] = ['for' => $for, 'value' => $value ?? $this->Parameter($key)]; }
 
     /** Return the raw child content string.
      * @return string
      */
-    public function RenderChildContent(): string { return $this->_->RenderChildContent(); }
+    public function RenderChildContent(): string { 
+        $this->_->EnsureChildrenBuilt();
+
+        if (empty($this->_->Children)) {
+            return $this->_->ChildContent;
+        }
+
+        $parts = [];
+        $last = 0;
+
+        foreach ($this->_->Children as $it) {
+            /** @var SystemComponent $child */
+            $child = $it['c'];
+            $start = $it['start'];
+            $end   = $it['end'];
+
+            // Only add text chunk if needed
+            if ($start > $last) {
+                $parts[] = substr($this->_->ChildContent, $last, $start - $last);
+            }
+
+            // resolve cascades NOW (after parent OnLoad/template ran)
+            if (!empty($this->Cascades)) {
+                $child->Cascaded = $this->_->ResolveCascadeFor($child);
+            } else {
+                $child->Cascaded = $this->_->Cascaded;
+            }
+
+            $parts[] = $child->Render();
+            $last = $end;
+        }
+
+        // tail text
+        $tailLen = strlen($this->_->ChildContent) - $last;
+        if ($tailLen > 0) {
+            $parts[] = substr($this->_->ChildContent, $last, $tailLen);
+        }
+
+        return implode('', $parts);
+    }
 
     /** Return wrapped direct child components.
      * @return array
      */
-    public function GetChildren(): array { return array_map(fn($c) => $c['c']->ViewComponent, $this->_->Children); }
+    public function GetChildren(): array { return array_map(fn($c) => $c->ViewComponent, $this->_->GetChildren()); }
 
     /** Filter wrapped children by component path.
      * @param string $type file path
@@ -69,29 +134,50 @@ class Component implements IComponent{
      * @param string $type file path
      * @return void
      */
-    public function RenderChildrenOfType(string $type): string { $out = ""; foreach($this->GetChildrenOfType($type) as /** @var Component $c */ $c) $out .= $c->Render(); return $out; }
+    public function RenderChildrenOfType(string $type): string {
+        $out = "";
+        $childs = $this->GetChildrenOfType($type);
+        foreach ($childs as /** @var Component $c */ $c) $out .= $c->Render();
+        return $out;
+    }
 
     /** Render attributes as an HTML string (escaped).
      * @return string
      */
-    public function RenderAttributes(): string { return $this->_->RenderAttributes(); }
+    public function RenderAttributes(): string {
+        $attrs = "";
+        foreach ($this->_->Attributes as $key => $value) {
+            if ($value === null) continue;
+            $safe = htmlspecialchars((string) $value, ENT_QUOTES);
+            $attrs .= "$key='$safe' ";
+        }
+        return $attrs;
+    }
+
+
 
     /** Get a single attribute value.
      * @param string $name attribute name
      * @return string|null attribute value or null
      */
-    public function GetAttribute(string $name): string|null { return $this->_->GetAttribute($name); }
+    public function GetAttribute(string $name): string|null {
+        return $this->_->Attributes[$name] ?? null;
+    }
 
     /** Get all attributes.
      * @return array attribute array
      */
-    public function GetAttributes(): array { return $this->_->GetAttributes(); }
+    public function GetAttributes(): array { return $this->_->Attributes; }
 
     /** Replace or set multiple attributes.
      * @param array $attrs attribute array
      * @return void
      */
-    public function SetAttributes(array $attrs): void { $this->_->SetAttributes($attrs); }
+    public function SetAttributes(array $attrs): void {
+        foreach ($attrs as $key => $value) {
+            $this->_->Attributes[$key] = $value;
+        }
+    }
 
     /** Merge attributes to the end.
      * @param array $attrs attribute array
@@ -105,37 +191,57 @@ class Component implements IComponent{
      */
     public function AddAttributesToStart(array $attrs): void { $this->_->AddAttributes($attrs, 'start'); }
 
+    /**
+     * Called on component create.
+     * @return void
+     */
     public function OnLoad():void {}
 
-
-    /** Render this component and its nested components.
-     * @return string
+    /**
+     * Called on component create before OnLoad.
+     * @return void
      */
-    public function Render(): string
-    {
+    public function Load():void { 
+        $this->_->AutoBindDeclaredParameters($this);
+        
+        $this->OnLoad();
+    }
+
+
+    /** Return pre render daf view string ready to daf parser.
+     * @return string
+    */
+    public function OnRender(): string {
         $renderScope = [];
         $strToRender = "";
 
         $templatePath = $this->_->GetComponentTemplatePath();
-        
 
-        if (str_starts_with($templatePath, "phar://") || str_starts_with($templatePath, "vendor") || str_starts_with($templatePath, Application::$BaseFolder)) { // Component::Exists($templatePath)
-
-            if(self::$UseNewUsingSystem){
-                // NEW: read source + extract imports BEFORE include (execute once only)
-                $_DAF_source = @file_get_contents($templatePath) ?: '';
-                $uses = $this->_->daf_extract_uses($_DAF_source);
-                foreach ($uses as $key => $use) {
-                    SystemComponent::AddNamespaces($use);
-                }
+        if(self::$extractUsing){
+            $_DAF_source = @file_get_contents($templatePath) ?: '';
+            $uses = $this->_->daf_extract_uses($_DAF_source);
+            foreach ($uses as $use) {
+                ComponentRegistry::AddNamespaces($use);
             }
-            
-            [$strToRender, $renderScope] = $this->_->RenderTemplateWithView($this, $templatePath);
         }
-        else { $strToRender = $this->_->Path; }
+        
+        [$strToRender, $renderScope] = $this->_->RenderTemplateWithView($this, $templatePath);
 
-        $cacheKey = $templatePath . ':' . strlen($strToRender);
-        $comps = CParser::MakeComponentsCachedKey($cacheKey, $strToRender);
+        $this->_->ScopesFromRender = $renderScope;
+        return $strToRender;
+    }
+
+    /** Render this component and its nested components.
+     * @return string
+    */
+    public function Render(): string
+    {
+        $strToRender = $this->OnRender();
+        $renderScope = $this->_->ScopesFromRender;
+        
+        $templatePath = $this->_->GetComponentTemplatePath();
+        $cacheKey = $templatePath . ':' . sha1($strToRender);
+        $comps = ComponentsParser::MakeComponentsCachedKey($cacheKey, $strToRender);
 
         if (!empty($comps)) {
             $out = '';
@@ -144,24 +250,21 @@ class Component implements IComponent{
             foreach ($comps as $item) {
                 /** @var SystemComponent $c */
                 $c = $item['component'];
+                $c->Parent = $this->_;
 
                 if (!empty($this->_->Cascades)) {
                     $c->Cascaded = $this->_->ResolveCascadeFor($c);
                 } else {
                     $c->Cascaded = $this->_->Cascaded;
                 }
-                $this->_->applyScopeToComponent($c, $renderScope);
+                $this->_->ApplyScopeToComponent($c, $renderScope);
 
                 $start = $item['start'];
                 $end = $item['end']; // absolute end index
 
                 $out .= substr($strToRender, $last, $start - $last);
 
-                try {
                 $out .= $c->Render();
-                } catch (\Throwable $th) {
-                echo $th->getMessage();
-                }
 
                 $last = $end;
             }
