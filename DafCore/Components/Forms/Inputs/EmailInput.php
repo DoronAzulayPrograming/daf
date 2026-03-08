@@ -6,5 +6,9 @@ namespace DafCore\Components\Forms\Inputs;
  */
 class EmailInput extends Input
 {
-    public string $Type = 'email';
+    public function OnLoad(): void
+    {
+        $this->_->Parameters['Type'] = 'email';
+        parent::OnLoad();
+    }
 }

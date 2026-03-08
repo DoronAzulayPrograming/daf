@@ -46,15 +46,15 @@ class ServicesProvidor implements IServicesProvidor, IServicesForCallback {
         return $this;
     }
     
-    public function AddScop(string $key, \Closure $callback): void{
+    public function AddScop(string $key, \Closure $callback){
         $this->container->AddScop($key, $callback);
     }
 
-    public function BindInterface(string $interface, string $concrete): void{
-        $this->container->BindInterface($interface, $concrete);
+    public function BindInterface(string $interface, string $concrete){
+        return $this->container->BindInterface($interface, $concrete);
     }
 
-    public function GetOne(string $serviceName): mixed {
+    public function GetOne(string $serviceName){
         return $this->container->GetOne($serviceName);
     }
 

@@ -54,7 +54,7 @@ trait MigrationsSchemaHelper
             $out[(string) $tableName] = $this->NormalizeTableSnap((string) $tableName, $t);
         }
 
-        //ksort($out);
+        ksort($out);
         return $out;
     }
 

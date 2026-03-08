@@ -16,7 +16,7 @@ class DIContainer implements IDIContainer {
     private array $services = [];
     private array $interfaceBindings = []; // Store interface bindings
     // Add a method to bind an interface to a concrete implementation
-    public function BindInterface(string $interface, string $concrete): void {
+    public function BindInterface(string $interface, string $concrete) {
         $this->interfaceBindings[$interface] = $concrete;
     }
 
@@ -30,7 +30,7 @@ class DIContainer implements IDIContainer {
         return true;
     }
 
-    public function GetOne(string $key): mixed {
+    public function GetOne(string $key) {
         if (isset($this->interfaceBindings[$key])) {
             // If the requested key is an interface and it's bound to a concrete class,
             // return an instance of the concrete class
@@ -78,14 +78,14 @@ class DIContainer implements IDIContainer {
         return $result;
     }
 
-    public function AddScop(string $key, Closure $callback): void{
+    public function AddScop(string $key, Closure $callback){
         $service = new \stdClass;
         $service->is_singleton = false;
         $service->dependency = $callback;
         $this->services[$key] = $service;
     }
 
-    public function AddSingleton(string $key, Closure $callback): void{
+    public function AddSingleton(string $key, Closure $callback){
         $service = new \stdClass;
         $service->is_singleton = true;
         $service->is_active = false;

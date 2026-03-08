@@ -27,33 +27,34 @@ class Controller extends BaseController
     protected function RenderView($view, $params = []): string{
         return $this->viewManager->RenderView($view, $params);
     }
+
     
-    protected function Ok(string $view, ...$params): string{
+    protected function Ok(string $view, array $params = []): string{
         return $this->Status(Response::HTTP_OK)->RenderView($view, $params);
     }
-    protected function InternalError(string $view, ...$params): string{
+    protected function InternalError(string $view, array $params = []): string{
         return $this->Status(Response::HTTP_INTERNAL_ERROR)->RenderView($view, $params);
     }
              
-    protected function BadRequest(string $view, ...$params): string {
+    protected function BadRequest(string $view, array $params = []): string {
         return $this->Status(Response::HTTP_BAD_REQUEST)->RenderView($view, $params);
     }
 
-    protected function NotFound(string $view, ...$params): string {
+    protected function NotFound(string $view, array $params = []): string {
         return $this->Status(Response::HTTP_NOT_FOUND)->RenderView($view, $params);
     }
 
 
-    protected function Created(string $view, ...$params): string{
+    protected function Created(string $view, array $params = []): string{
         return $this->Status(Response::HTTP_CREATED)->RenderView($view, $params);
     }         
-    protected function NoContent(string $view, ...$params): string{
+    protected function NoContent(string $view, array $params = []): string{
         return $this->Status(Response::HTTP_NO_CONTENT)->RenderView($view, $params);
     }
-    protected function Forbidden(string $view, ...$params): string{
+    protected function Forbidden(string $view, array $params = []): string{
         return $this->Status(Response::HTTP_FORBIDDEN)->RenderView($view, $params);
     }
-    protected function Unauthorized(string $view, ...$params): string{
+    protected function Unauthorized(string $view, array $params = []): string{
         return $this->Status(Response::HTTP_UNAUTHORIZED)->RenderView($view, $params);
     }
 

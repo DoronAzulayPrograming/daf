@@ -225,12 +225,12 @@ abstract class Context
 
                 if ($attrName === \DafDb\Attributes\ForeignKey::class) {
                     $attrInstance = $attr->newInstance();
-                    $fkTableName = $attrInstance->Table;
-                    $fkTableCol = $attrInstance->Column;
+                    $fkTableName = $attrInstance->Value->Table;
+                    $fkTableCol = $attrInstance->Value->Column;
 
                     $onDelete = null;
-                    if (isset($attrInstance->OnDelete)) {
-                        $onDelete = $attrInstance->OnDelete;
+                    if (isset($attrInstance->Value->OnDelete)) {
+                        $onDelete = $attrInstance->Value->OnDelete;
                     }
 
                     $table->AddForeignKey(new ForeignKeyInfo(

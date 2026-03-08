@@ -6,9 +6,9 @@ namespace DafCore\Components\Forms\Inputs;
  */
 class PasswordInput extends Input
 {
-    public string $Type = 'password';
     public function OnLoad(): void
     {
+        $this->_->Parameters['Type'] = 'password';
         parent::OnLoad();
         $this->Value = null; // never re-populate
     }

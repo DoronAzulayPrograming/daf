@@ -15,6 +15,7 @@ use DafCore\Flash\FlashMessages;
 use DafCore\Flash\IFlashMessages;
 use DafCore\Forms\FlashFormFeedback;
 use DafCore\Flash\SessionFlashStore;
+use DafCore\Views\Components\ComponentRegistry;
 
 require_once __DIR__."/Controllers/Attributes.php";
 
@@ -39,6 +40,8 @@ class Application{
         $this->registerSystemComponents();
     }
 
+
+    public function UseViews(): void { $this->Router->UseViews(); }
 
     public function Run(): void {
         if (self::$BuildOnly) return;
@@ -65,7 +68,7 @@ class Application{
     public function GetExecutionTime(): string { return $this->executionTime; }
     public function AddGlobalMiddleware($callback): void { $this->Router->AddMiddleware($callback); }
 
-    public function AddAntiForgeryToken(): void {
+    public function AddAntiForgeryToken(){
         $this->Services->AddSingleton(AntiForgery::class);
         $this->AddGlobalMiddleware(function(IViewManager $vm, AntiForgery $antiForgery, callable $next){
             $vm->OnRender(function() use ($antiForgery){
