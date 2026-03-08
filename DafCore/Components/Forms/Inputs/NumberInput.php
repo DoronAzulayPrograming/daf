@@ -6,9 +6,5 @@ namespace DafCore\Components\Forms\Inputs;
  */
 class NumberInput extends Input
 {
-    public function OnLoad(): void
-    {
-        $this->_->Parameters['Type'] = 'number';
-        parent::OnLoad();
-    }
+    public string $Type = 'number';
 }

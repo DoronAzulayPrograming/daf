@@ -1,6 +1,7 @@
 <?php
 namespace DafCore\Views\Components;
 
+use DafCore\Application;
 use DafCore\Component;
 
 
@@ -10,6 +11,7 @@ class SystemComponent
    public string $Name;
    public string $FilePath;
    public string $Namespace;
+   public string $SourceText;
    public string $ChildContent;
 
    public array $GlobalParameters = [];
@@ -32,6 +34,8 @@ class SystemComponent
       $this->Id = uniqid();
 
       if(str_starts_with($path, "Phar\\vendor\\")) $path = ComponentRegistry::NormalizeFolderPath($path); 
+      
+      $this->SourceText = $path;
       
       $this->Name = $this->baseNamespace($path);
       $this->FilePath = ComponentRegistry::ResolveFilePath($path);
@@ -63,7 +67,6 @@ class SystemComponent
 
       return $markup . " >" . $this->ChildContent . "</{$this->Name}>";
    }
-
 
    public static function RenderMarkup(string $strToRender): string{
       $cacheKey = sha1($strToRender);
@@ -97,6 +100,14 @@ class SystemComponent
    public function GetType(): string { return ltrim($this->Namespace ."\\". $this->Name, "\\"); }
 
    public function GetComponentTemplatePath(): string { return $this->FilePath . ".view.php"; }
+   public function TryGetComponentTemplatePath(): ?string { 
+      $normalized = str_replace("\\", "/", trim($this->FilePath));
+      if (!str_starts_with($normalized, "phar://") && !str_starts_with($normalized, "vendor/") && !str_starts_with($normalized, Application::$BaseFolder."/")) {
+         return null;
+      }
+
+      return $this->FilePath . ".view.php"; 
+   }
 
 
    /** Return direct child components. */

@@ -12,16 +12,16 @@ class RequestBody extends \stdClass
 }
 
 interface IRequest{
-    function GetRealUrl() : string;
-    function GetUrlPath() : string;
-    function GetQueryParams() : array;
-    function GetRouteParams() : array;
-    function SetRouteParams(array $params) : void;
-    function GetMethod() : string;
-    function GetBody() : RequestBody;
-    function GetBodyArray() : array;
+    public function GetRealUrl() : string;
+    public function GetUrlPath() : string;
+    public function GetQueryParams() : array;
+    public function GetRouteParams() : array;
+    public function SetRouteParams(array $params) : void;
+    public function GetMethod() : string;
+    public function GetBody() : RequestBody;
+    public function GetBodyArray() : array;
     public function GetFiles(): array;
-    function GetHeaders() : array;
+    public function GetHeaders() : array;
     public function GetCookies(): array;
     public function TryGetCookie(string $name , &$value) : bool;
 }
@@ -38,10 +38,10 @@ class Request implements IRequest {
         return $this->data[$name] ?? null;
     }
 
-    function GetRealUrl() : string {
+    public function GetRealUrl() : string {
         return $_SERVER['REQUEST_URI'];
     }
-    function GetUrlPath() : string {
+    public function GetUrlPath() : string {
         $p = $_SERVER['REQUEST_URI'];
 
         $urlPath = trim(parse_url($p, PHP_URL_PATH), "/");
@@ -49,7 +49,7 @@ class Request implements IRequest {
         return "/".$urlPath;
     }
 
-    function GetQueryParams() : array {
+    public function GetQueryParams() : array {
         $queryParams = [];
         parse_str(parse_url($_SERVER['REQUEST_URI'], PHP_URL_QUERY), $queryParams);
         return $queryParams;
@@ -61,16 +61,16 @@ class Request implements IRequest {
         $this->routeParameters = $params;
     }
 
-    function GetMethod() : string {
+    public function GetMethod() : string {
         return $_SERVER['REQUEST_METHOD'];
     }
 
-    function GetHeaders() : array {
+    public function GetHeaders() : array {
         return apache_request_headers();
     }
 
 
-    function GetBody() : RequestBody {
+    public function GetBody() : RequestBody {
         $body = $this->GetBodyArray();
         return new RequestBody($body);
     }

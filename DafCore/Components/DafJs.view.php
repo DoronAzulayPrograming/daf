@@ -208,7 +208,14 @@
         }
 
         navigate(url, options = {}) {
-            const urlLink = new URL(url);
+            const urlLink = new URL(url, window.location.href);
+
+            // 🚀 Stop if navigating to another domain
+            if (urlLink.origin !== window.location.origin) {
+                window.location = urlLink.href
+                return;
+            }
+
             if (urlLink.href === window.location.href) return;
 
             // save scroll for the page we're leaving

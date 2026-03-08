@@ -24,14 +24,16 @@ class DbSet extends Queryable
 
         $ref = new \ReflectionClass($called_class);
 
+        /** @var \ReflectionAttribute[] $table_attr */
         $table_attr = $ref->getAttributes(Table::class);
         if (empty($table_attr))
             throw new \Exception("Table attribute is missing");
         
-        $attr_args = $table_attr[0]->getArguments();
+        /** @var \DafDb\Attributes\Table $table_attr_ins */
+        $table_attr_ins = $table_attr[0]->newInstance();
 
-        $tableName = $attr_args['Name'] ?? $attr_args['name'] ?? $attr_args[0] ?? $baseModelClassName;
-        $tableModelClass = $attr_args['Model'] ?? $attr_args['model'] ?? $attr_args[1] ?? null;
+        $tableName = $table_attr_ins->Name !== "" ? $table_attr_ins->Name : $baseModelClassName;
+        $tableModelClass = $table_attr_ins->Model;
 
         if (empty($tableName))
             throw new \Exception("Table name is missing");

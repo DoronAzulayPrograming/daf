@@ -78,11 +78,12 @@ final class AttributeToBuilderMapper
 
             $col->Nullable($type->allowsNull());
 
+            /** @var \ReflectionAttribute[] $maxLength */
             $maxLength = $p->getAttributes(\DafDb\Attributes\MaxLength::class);
             if ($maxLength) {
-                $args = $maxLength[0]->getArguments();
-                $value = $args[0] ?? $args['Value'] ?? $args['value'];
-                $col->MaxLength($value);
+                /** @var \DafDb\Attributes\MaxLength $ins */
+                $ins = $maxLength[0]->newInstance();
+                $col->MaxLength($ins->Value);
             }
 
             if ($p->getAttributes(\DafDb\Attributes\AutoIncrement::class)) {
@@ -97,12 +98,14 @@ final class AttributeToBuilderMapper
                 $primaryKeys[] = $name;
             }
 
+            /** @var \ReflectionAttribute[] $fk */
             $fk = $p->getAttributes(\DafDb\Attributes\ForeignKey::class);
             if ($fk) {
-                $args = $fk[0]->getArguments();
-                $refTable  = $args[0] ?? $args['Table'];
-                $refColumn = $args[1] ?? $args['Column'];
-                $onDelete  = $args[2] ?? $args['OnDelete'] ?? null;
+                /** @var \DafDb\Attributes\ForeignKey $ins */
+                $ins = $fk[0]->newInstance();
+                $refTable  = $ins->Table;
+                $refColumn  = $ins->Column;
+                $onDelete  = $ins->OnDelete;
 
                 $t->Constraints->ForeignKey($name, $refTable, $refColumn, $onDelete);
 

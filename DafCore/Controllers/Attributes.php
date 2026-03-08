@@ -5,7 +5,6 @@ namespace DafCore\Controllers\Attributes;
 use DafCore\IRequest;
 use DafCore\IViewManager;
 use DafCore\Views\ScriptsOutlet;
-use DafGlobals\IO\Path;
         
 #[\Attribute(\Attribute::TARGET_CLASS)]
 class Route {
@@ -50,7 +49,8 @@ class Layout {
 }
 #[\Attribute(\Attribute::TARGET_METHOD | \Attribute::TARGET_FUNCTION)]
 class AntiForgeryValidateToken{
-    function __construct(private string $errorMsg = ""){}
+    function __construct(private string $message = "Invalid CSRF token."){}
+
     function Handle(\DafCore\Session $session, IViewManager $viewManager, \DafCore\Request $request, \DafCore\IResponse $response, callable $next){
         $session->Start();
         if($session->TryGetItem("CSRF-token", $token)){
@@ -59,24 +59,15 @@ class AntiForgeryValidateToken{
                 return $next();
             }
         }
-        $status = \DafCore\Response::HTTP_BAD_REQUEST;
-        $msg = empty($this->errorMsg) ? "Invalid CSRF token." : $this->errorMsg;
-        $filePath = Path::Combine(\DafCore\Application::$BaseFolder, "Views", "_ErrorPage");
-        $view = "";
-        if(file_exists("$filePath.php") || file_exists("$filePath.view.php")){
-            $view = $filePath;
-        } else {
-            return $response->BadRequest($msg);
-        }
 
-        $response->Status($status);
-        return $viewManager->RenderView($view, ["Status"=>$status, "Message"=>$msg]);
+        $response->Status(\DafCore\Response::HTTP_BAD_REQUEST);
+        return $viewManager->RenderView($this->message);
     }
 }
 
 #[\Attribute(\Attribute::TARGET_METHOD | \Attribute::TARGET_FUNCTION)]
 class Placeholder {
-    function __construct(public string $viewName, public int $dellay = 100){ }
+    function __construct(private string $message, private int $dellay = 100){ }
 
     private function getRetrunUrl(IRequest $req): string{
         $path = $req->GetUrlPath(); // e.g. "/products"
@@ -117,6 +108,6 @@ class Placeholder {
         },".$this->dellay." )
         </script>");
 
-        return $vm->RenderView($this->viewName);
+        return $vm->RenderView($this->message);
     }
 }

@@ -4,5 +4,9 @@ namespace DafDb\Attributes;
 #[\Attribute(\Attribute::TARGET_PROPERTY)]
 class DbInclude
 {
-    public function __construct(public string $Table, public string $Condition, public string | null $Model = null) { }
+    public string $Table;
+    public string $Condition;
+    public ?string $Model = null;
+
+    public function __construct(string $table, string $condition, ?string $model = null) { }
 }

@@ -31,30 +31,46 @@ class ComponentsParser {
 
         $result = [];
         $string_state = ['isOn' => false, 'char' => self::CharNone];
+        $insideTag = false;
+
         while (self::$CurrentChar != self::CharNone) {
             $isString = $string_state['isOn'];
-            if(self::$CurrentChar === "`" || self::$CurrentChar === "'" || self::$CurrentChar === '"'){
-                $char = $string_state['char']; 
-                if($char === self::CharNone || self::$CurrentChar === $char){
-                    $string_state['isOn'] = !$string_state['isOn'];
-                    $string_state['char'] = self::$CurrentChar; 
-                }
+
+            if (!$isString && self::$CurrentChar === '<') {
+                $insideTag = true;
                 self::Advance();
+
+                if (ctype_upper(self::$CurrentChar)) {
+                    $res = self::ParseComponent();
+                    if ($res !== null) $result[] = $res;
+                    $insideTag = false; // ParseComponent already consumed until end tag
+                    continue;
+                }
+
                 continue;
             }
 
-            if(!$isString && self::$CurrentChar === "<"){
-                self::Advance();
-                if(ctype_upper(self::$CurrentChar)){
-                    $res = self::ParseComponent();
-                    if($res !== null){
-                        $result[] = $res;
+            if ($insideTag) {
+                if (self::$CurrentChar === '"' || self::$CurrentChar === "'" || self::$CurrentChar === '`') {
+                    $char = $string_state['char'];
+                    if ($char === self::CharNone || self::$CurrentChar === $char) {
+                        $string_state['isOn'] = !$string_state['isOn'];
+                        $string_state['char'] = self::$CurrentChar;
                     }
+                    self::Advance();
                     continue;
-                }         
+                }
+
+                if (!$isString && self::$CurrentChar === '>') {
+                    $insideTag = false;
+                    self::Advance();
+                    continue;
+                }
             }
+
             self::Advance();
         }
+
 
         return $result;
     }

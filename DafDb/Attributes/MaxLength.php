@@ -3,5 +3,6 @@ namespace DafDb\Attributes;
 
 #[\Attribute(\Attribute::TARGET_PROPERTY)]
 class MaxLength {
-    public function __construct(public int $Value) {}
+    public int $Value;
+    public function __construct(int $value) { $this->Value = $value; }
 }

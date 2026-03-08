@@ -71,6 +71,12 @@ class ViewManager implements IViewManager
 
          $base = Application::$BaseFolder;
 
+         $importsPath = Path::Combine($base, "Views", "_Imports");
+         if(file_exists("$importsPath.view.php")){
+            $importsComponent = new SystemComponent($importsPath);
+            $importsComponent->Render();
+         }
+
          $hostPath = Path::Combine($base, "Views", "_Layouts", "Host");
          if(!file_exists("$hostPath.view.php")) return $viewComponent->Render();
 

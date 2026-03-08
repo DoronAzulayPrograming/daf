@@ -24,7 +24,7 @@ class DbContext
         $manualSnapshot = $this->ModelSnapshot(new SnapshotBuilder());
         if($manualSnapshot !== null){
             $tables = $manualSnapshot->GetTables();
-            ksort($tables);
+            //ksort($tables);
             return $tables;
         }
 

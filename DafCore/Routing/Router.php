@@ -12,12 +12,11 @@ use DafGlobals\Collections\Collection;
 use DafCore\Routing\RouteMatchContext;
 use DafCore\Controllers\BaseController;
 use DafCore\Controllers\Attributes\Route;
+use DafGlobals\IO\Path;
 
 class Router
 {
     public bool $needRecach = false;
-    private bool $useViews = false;
-    public function UseViews(): void { $this->useViews = true; }
 
     private ServicesProvidor $sp;
     private IViewManager $viewManager;
@@ -359,11 +358,13 @@ class Router
     }
     private function executeNotFound(RouteMatchContext $ctx): string
     {
-        if($this->useViews){
+        $appRootFolder = \DafCore\Application::$BaseFolder;
+        $hostPath = Path::Combine($appRootFolder, "Views", "_Layouts", "Host");
+        if(file_exists("$hostPath.view.php")){
             $this->context->Response ->Status($ctx->StatusCode);
             return $this->viewManager->RenderView("");
-        }else 
-         return $this->context->Response
+        }
+        else return $this->context->Response
             ->Status($ctx->StatusCode)
             ->Send((string)$ctx->NotFoundPayload);
     }

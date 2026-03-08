@@ -9,13 +9,13 @@ use DafCore\Views\Components\ComponentRegistry;
 class Component implements IComponent {
     protected static bool $extractUsing = true;
     public static function DisableExtractUsing(): void { self::$extractUsing = false; }
-   
+    
+    public string $Id;
+    
     /** Wrap a component with a restricted, template-friendly API.
      * @param SystemComponent $_
      */
-    public function __construct(protected SystemComponent $_)
-    {
-    }
+    public function __construct(protected SystemComponent $_) { $this->Id = $_->Id; }
 
 
     public function GetParent(): ?Component { return $this->_->Parent?->ViewComponent; }
@@ -215,7 +215,17 @@ class Component implements IComponent {
         $renderScope = [];
         $strToRender = "";
 
-        $templatePath = $this->_->GetComponentTemplatePath();
+        $templatePath = $this->_->TryGetComponentTemplatePath();
+
+        if($templatePath === null){
+            if(self::$extractUsing){
+                $uses = $this->_->daf_extract_uses($this->_->SourceText);
+                foreach ($uses as $use) {
+                    ComponentRegistry::AddNamespaces($use);
+                }
+            }
+            return $this->_->SourceText;
+        }
 
         if(self::$extractUsing){
             $_DAF_source = @file_get_contents($templatePath) ?: '';
@@ -238,8 +248,12 @@ class Component implements IComponent {
     {
         $strToRender = $this->OnRender();
         $renderScope = $this->_->ScopesFromRender;
+
+        $renderScope['this'] = $this;
         
-        $templatePath = $this->_->GetComponentTemplatePath();
+        $templatePath = $this->_->TryGetComponentTemplatePath();
+        if($templatePath === null) $templatePath = "System/Fragment";
+        
         $cacheKey = $templatePath . ':' . sha1($strToRender);
         $comps = ComponentsParser::MakeComponentsCachedKey($cacheKey, $strToRender);
 
